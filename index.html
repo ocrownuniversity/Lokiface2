@@ -613,6 +613,23 @@ function audioExtFromMime(mime) {
     if (mime.includes('ogg')) return 'ogg';
     return 'webm';
 }
+// Pauses itself the moment it's scrolled out of the viewport — a plain <video> keeps playing
+// (and keeps making sound) even once you've scrolled past it in the feed, since nothing tells
+// it to stop. Only calls the standard .pause(), so unlike an audio-processing wrapper this
+// can't ever leave the video silent — worst case it just doesn't auto-pause.
+function AutoPauseVideo(props) {
+    const ref = useRef(null);
+    useEffect(() => {
+        const el = ref.current;
+        if (!el) return;
+        const io = new IntersectionObserver((entries) => {
+            entries.forEach(entry => { if (!entry.isIntersecting && !el.paused) el.pause(); });
+        }, { threshold: 0 });
+        io.observe(el);
+        return () => io.disconnect();
+    }, []);
+    return React.createElement("video", Object.assign({ ref }, props));
+}
 function ExpandableText({ text, className, limit }) {
     const [expanded, setExpanded] = useState(false);
     const maxChars = limit || 220;
@@ -4563,6 +4580,12 @@ function MainApp({ route, setRoute }) {
     // admin panel is only reachable through the hidden secret-URL door (see App()), never
     // through visible navigation, per the "not discoverable by regular users" requirement.
     const go = (r) => { setRoute(r); };
+    // Videos were sometimes still audibly playing after navigating elsewhere — this is a
+    // blunt but reliable safety net: whenever the route changes, pause every <video> still in
+    // the document, regardless of which screen/overlay it belongs to.
+    useEffect(() => {
+        document.querySelectorAll('video').forEach(v => { if (!v.paused) v.pause(); });
+    }, [route]);
     const goNav = (n) => {
         if (n.name === 'home' && route.name === 'home') {
             window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -5854,7 +5877,7 @@ function PostCard({ post, go, groupCtx, autoOpenComments, sponsored, repeated })
         post.gifURL && React.createElement("div", { className: "bg-slate-100 dark:bg-ink-900 mb-2" },
             React.createElement("img", { src: post.gifURL, loading: "lazy", onClick: () => openLightbox([post.gifURL], 0), className: "w-full max-h-[420px] object-contain cursor-zoom-in mx-auto" })),
         post.videoURL && React.createElement("div", { className: "bg-black mb-2" },
-            React.createElement("video", { src: post.videoURL, controls: true, playsInline: true, className: "w-full max-h-[480px]" })),
+            React.createElement(AutoPauseVideo, { src: post.videoURL, controls: true, playsInline: true, className: "w-full max-h-[480px]" })),
         post.documentURL && React.createElement("div", { className: "px-3 sm:px-4 mb-2" },
             React.createElement("a", { href: post.documentURL, target: "_blank", rel: "noopener noreferrer", className: "flex items-center gap-3 bg-slate-50 dark:bg-ink-700 rounded-xl p-3 hover:bg-slate-100 dark:hover:bg-ink-600 transition" },
                 React.createElement("span", { className: "w-10 h-10 rounded-lg bg-brand-50 dark:bg-brand-900/30 text-brand-600 dark:text-brand-400 flex items-center justify-center shrink-0" }, React.createElement("i", { className: "fa-solid fa-file-lines" })),
@@ -9726,12 +9749,6 @@ function ChatWindow({ chatId, otherUid, pageId, go }) {
     const [emojiOpen, setEmojiOpen] = useState(false);
     const [recording, setRecording] = useState(false);
     const [recordSeconds, setRecordSeconds] = useState(0);
-    // Facebook/WhatsApp-style hold-to-record: dragX tracks how far the finger has slid left
-    // from where the mic button was first pressed, and cancelling flips true once that passes
-    // the cancel threshold — releasing at that point discards the recording instead of sending.
-    const [dragX, setDragX] = useState(0);
-    const [cancelling, setCancelling] = useState(false);
-    const recordStartXRef = useRef(0);
     const [uploading, setUploading] = useState(false);
     const [progress, setProgress] = useState(0);
     const [activeMenuId, setActiveMenuId] = useState(null);
@@ -9956,34 +9973,10 @@ function ChatWindow({ chatId, otherUid, pageId, go }) {
     const stopRecording = (cancel) => {
         clearInterval(recordTimerRef.current);
         setRecording(false);
-        setDragX(0);
-        setCancelling(false);
         if (recorderRef.current) {
             recorderRef.current.__cancelled = !!cancel;
             recorderRef.current.stop();
         }
-    };
-    // Press-and-hold mic button, matching Facebook Messenger: hold to record, slide left
-    // to cancel, release to send (or cancel, if slid past the threshold first).
-    const CANCEL_SLIDE_PX = 90;
-    const onMicDown = (e) => {
-        if (blocked) return;
-        e.preventDefault();
-        recordStartXRef.current = e.clientX;
-        setDragX(0);
-        setCancelling(false);
-        try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) { }
-        startRecording();
-    };
-    const onMicMove = (e) => {
-        if (!recording) return;
-        const dx = Math.min(0, e.clientX - recordStartXRef.current);
-        setDragX(dx);
-        setCancelling(dx <= -CANCEL_SLIDE_PX);
-    };
-    const onMicUp = () => {
-        if (!recording) return;
-        stopRecording(cancelling);
     };
     const deleteForMe = (m) => db.collection('chats').doc(chatId).collection('messages').doc(m.id).update({ deletedFor: FieldValue.arrayUnion(profile.id) });
     // "Delete for everyone" (unsend) keeps the message doc (so ordering/read-receipts stay
@@ -10108,26 +10101,20 @@ function ChatWindow({ chatId, otherUid, pageId, go }) {
                         } }, disabled: blocked, placeholder: blocked ? "You can't message this user" : "Message", className: "w-full bg-[#F0F0F0] dark:bg-ink-700 rounded-full pl-4 pr-9 py-2 text-sm disabled:opacity-50" }),
                     React.createElement("button", { onClick: () => { setEmojiOpen(a => !a); setAttachOpen(false); }, disabled: blocked, className: "absolute right-2 text-[#0d9488] w-6 h-6 flex items-center justify-center disabled:opacity-40" },
                         React.createElement("i", { className: "fa-regular fa-face-smile" })))
-                    // Facebook-style recording bar: pulsing timer + a fading "slide to cancel"
-                    // hint, plus an explicit trash button as a tap-to-cancel fallback for
-                    // anyone who doesn't want to hold-and-drag.
-                    : React.createElement("div", { className: "flex-1 flex items-center gap-2 bg-red-50 dark:bg-red-900/20 rounded-full pl-1.5 pr-3 py-1.5 overflow-hidden" },
+                    // Facebook-style recording bar: trash button to cancel, a live timer, and
+                    // an explicit send button — no gesture required to actually send it.
+                    : React.createElement("div", { className: "flex-1 flex items-center gap-2 bg-red-50 dark:bg-red-900/20 rounded-full pl-1.5 pr-1.5 py-1.5" },
                         React.createElement("button", { onClick: () => stopRecording(true), className: "text-red-500 w-7 h-7 flex items-center justify-center shrink-0" },
                             React.createElement("i", { className: "fa-solid fa-trash text-xs" })),
                         React.createElement("span", { className: "w-2 h-2 rounded-full bg-red-500 animate-pulse shrink-0" }),
-                        React.createElement("span", { className: "text-sm text-red-500 font-mono shrink-0" },
+                        React.createElement("span", { className: "text-sm text-red-500 font-mono flex-1" },
                             Math.floor(recordSeconds / 60) + ":" + String(recordSeconds % 60).padStart(2, '0')),
-                        React.createElement("span", { className: "flex-1 text-center text-xs text-slate-400 select-none whitespace-nowrap", style: { opacity: Math.max(0, 1 - Math.abs(dragX) / CANCEL_SLIDE_PX) } },
-                            React.createElement("i", { className: "fa-solid fa-chevron-left mr-1" }), "Slide to cancel")),
+                        React.createElement("button", { onClick: () => stopRecording(false), className: "bg-brand-600 text-white rounded-full w-8 h-8 flex items-center justify-center shrink-0" },
+                            React.createElement("i", { className: "fa-solid fa-paper-plane text-xs" }))),
                 !recording && text.trim() && React.createElement("button", { onClick: sendText, className: "text-[#0d9488] rounded-full w-9 h-9 flex items-center justify-center shrink-0 text-xl" },
                     React.createElement("i", { className: "fa-solid fa-paper-plane" })),
-                // The mic/record button itself is never unmounted while recording — swapping it
-                // out mid-gesture would break the pointer capture that tracks the hold-and-slide.
-                (!text.trim() || recording) && React.createElement("button", {
-                    onPointerDown: onMicDown, onPointerMove: onMicMove, onPointerUp: onMicUp, onPointerCancel: onMicUp,
-                    disabled: blocked, style: recording ? { transform: `translateX(${dragX}px)`, touchAction: 'none' } : undefined,
-                    className: "shrink-0 rounded-full flex items-center justify-center transition-colors " + (recording ? ("w-10 h-10 text-white " + (cancelling ? "bg-red-600" : "bg-brand-600")) : "text-[#0d9488] w-9 h-9 disabled:opacity-40 text-xl")
-                }, React.createElement("i", { className: "fa-solid " + (recording ? (cancelling ? "fa-trash" : "fa-microphone") : "fa-microphone") + (recording ? " text-sm" : "") })))),
+                !recording && !text.trim() && React.createElement("button", { onClick: startRecording, disabled: blocked, className: "text-[#0d9488] w-9 h-9 flex items-center justify-center disabled:opacity-40 text-xl" },
+                    React.createElement("i", { className: "fa-solid fa-microphone" })))),
         forwardMsg && React.createElement(ForwardModal, { message: forwardMsg, onClose: () => setForwardMsg(null) }),
         reportUserOpen && React.createElement(ReportReasonSheet, { targetType: "user", targetId: otherUid, targetOwnerId: otherUid, onClose: () => setReportUserOpen(false) })));
 }
@@ -12108,7 +12095,7 @@ function GroupPhotosTab({ posts, go }) {
 function GroupVideosTab({ posts }) {
     const videos = posts.filter(p => p.videoURL);
     if (videos.length === 0) return React.createElement("p", { className: "text-sm text-slate-400 text-center py-16" }, "No videos yet.");
-    return React.createElement("div", { className: "grid grid-cols-2 gap-2" }, videos.map(p => React.createElement("video", { key: p.id, src: p.videoURL, controls: true, className: "w-full rounded-lg bg-black aspect-video" })));
+    return React.createElement("div", { className: "grid grid-cols-2 gap-2" }, videos.map(p => React.createElement(AutoPauseVideo, { key: p.id, src: p.videoURL, controls: true, className: "w-full rounded-lg bg-black aspect-video" })));
 }
 function GroupFilesTab({ posts, go }) {
     const files = posts.filter(p => p.documentURL);
