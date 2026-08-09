@@ -1012,7 +1012,7 @@ async function ensureChat(meId, otherId) {
     }
     return id;
 }
-async function sendChatMessage(meId, chatId, otherUid, payload) {
+async function sendChatMessage(meId, chatId, otherUid, payload, customId) {
     await ensureChat(meId, otherUid);
     const callPreview = () => {
         const isVideo = payload.callType === 'video';
@@ -1020,8 +1020,12 @@ async function sendChatMessage(meId, chatId, otherUid, payload) {
         if (payload.callStatus === 'rejected') return 'Declined call';
         return 'Missed ' + (isVideo ? 'video' : 'voice') + ' call';
     };
-    const previewText = payload.type === 'text' ? payload.text : payload.type === 'call' ? callPreview() : ('[' + payload.type + ']');
-    await db.collection('chats').doc(chatId).collection('messages').add(Object.assign({ senderId: meId, createdAt: FieldValue.serverTimestamp(), readBy: [], deliveredTo: [], deletedFor: [], reactions: {} }, payload));
+    const previewText = payload.type === 'text' ? payload.text : payload.type === 'call' ? callPreview() : payload.type === 'voice' ? '🎤 Voice message' : ('[' + payload.type + ']');
+    // A pre-generated id (used for voice notes, so the Storage path chat-media/{chatId}/voice/
+    // {messageId}.ext and this Firestore doc share the same id) makes the write idempotent: a
+    // retried send reuses the exact same doc instead of creating a duplicate message.
+    const msgRef = customId ? db.collection('chats').doc(chatId).collection('messages').doc(customId) : db.collection('chats').doc(chatId).collection('messages').doc();
+    await msgRef.set(Object.assign({ senderId: meId, createdAt: FieldValue.serverTimestamp(), readBy: [], deliveredTo: [], deletedFor: [], reactions: {} }, payload));
     await db.collection('chats').doc(chatId).set({
         lastMessage: { type: payload.type, text: previewText, senderId: meId }, lastMessageAt: FieldValue.serverTimestamp()
     }, { merge: true });
@@ -1035,6 +1039,7 @@ async function sendChatMessage(meId, chatId, otherUid, payload) {
     db.collection('notifications').doc(otherUid).collection('items').add({
         type: 'message', fromUserId: meId, chatId, read: false, createdAt: FieldValue.serverTimestamp()
     });
+    return msgRef.id;
 }
 /* ============================== FRIENDS ============================== */
 function friendshipId(a, b) { return chatIdFor(a, b); }
@@ -9490,7 +9495,7 @@ function ChatRow({ row, go, search, onPin, onArchive, onDelete, onAccept, onDecl
         return null;
     if (search && !(((_a = user.displayName) === null || _a === void 0 ? void 0 : _a.toLowerCase().includes(search.toLowerCase())) || ((_b = user.username) === null || _b === void 0 ? void 0 : _b.toLowerCase().includes(search.toLowerCase()))))
         return null;
-    const previewMap = { image: '📷 Photo', video: '🎥 Video', audio: '🎤 Voice note', document: '📄 Document', call: '📞 ' + ((row.lastMessage && row.lastMessage.text) || 'Call') };
+    const previewMap = { image: '📷 Photo', video: '🎥 Video', audio: '🎤 Voice note', voice: '🎤 Voice note', document: '📄 Document', call: '📞 ' + ((row.lastMessage && row.lastMessage.text) || 'Call') };
     const preview = row.lastMessage ? (row.lastMessage.type === 'text' ? row.lastMessage.text : (previewMap[row.lastMessage.type] || 'Message')) : 'Say hello 👋';
     const openChat = () => go({ name: 'chat', chatId: row.chatId, otherUid: row.otherUid });
     const unread = row.unreadCount > 0;
@@ -9520,19 +9525,70 @@ function ChatRow({ row, go, search, onPin, onArchive, onDelete, onAccept, onDecl
                     React.createElement("button", { onClick: () => { onDelete(); setMenuOpen(false); }, className: "w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-slate-50 dark:hover:bg-ink-600" }, "Delete"))))))));
 }
 /* ============================== MESSAGING: CHAT WINDOW ============================== */
+// Picks the best MediaRecorder audio format the current browser actually supports. Chrome/
+// Android record Opus-in-WebM; Safari/iOS don't support that container for MediaRecorder at
+// all, so this falls through to AAC-in-MP4 there instead of silently failing to record.
+function pickVoiceMimeType() {
+    if (!window.MediaRecorder || !MediaRecorder.isTypeSupported)
+        return '';
+    const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/aac', 'audio/ogg;codecs=opus'];
+    for (const c of candidates) {
+        if (MediaRecorder.isTypeSupported(c))
+            return c;
+    }
+    return '';
+}
+function extForVoiceMime(mime) {
+    if (!mime) return 'webm';
+    if (mime.includes('mp4') || mime.includes('aac')) return 'm4a';
+    if (mime.includes('ogg')) return 'ogg';
+    return 'webm';
+}
+// Compresses the raw per-frame amplitude samples captured live during recording down to a
+// fixed number of bars, taking the loudest sample in each bucket so quiet consonants and loud
+// peaks both still show up — this becomes the message's permanent, real waveform (not a fake
+// generated shape), stored alongside it in Firestore.
+function downsampleWaveform(samples, buckets) {
+    if (!samples || !samples.length)
+        return new Array(buckets).fill(0.15);
+    const out = [];
+    const chunk = samples.length / buckets;
+    for (let i = 0; i < buckets; i++) {
+        const start = Math.floor(i * chunk), end = Math.max(start + 1, Math.floor((i + 1) * chunk));
+        let peak = 0;
+        for (let j = start; j < end && j < samples.length; j++)
+            peak = Math.max(peak, samples[j]);
+        out.push(Math.max(0.12, Math.min(1, peak)));
+    }
+    return out;
+}
+// Ensures only one voice note plays at a time across the whole chat (Messenger/WhatsApp
+// behavior) — starting a new one pauses whatever was previously playing.
+let __activeVoiceAudio = null;
+function claimActiveVoiceAudio(el) {
+    if (__activeVoiceAudio && __activeVoiceAudio !== el) {
+        try { __activeVoiceAudio.pause(); } catch (e) { }
+    }
+    __activeVoiceAudio = el;
+}
 // Custom voice-message player — replaces the bare native <audio controls>, matching the
 // play/pause + waveform + progress + duration + speed control look of WhatsApp/Telegram/iMessage
 // voice notes. Uses a real <audio> element under the hood for actual playback/seeking; only the
-// UI chrome is custom.
-function VoiceMessagePlayer({ src, isMe }) {
+// UI chrome is custom. `duration`/`waveform` can be passed in already-known (captured at record
+// time and stored on the message) so the player never has to wait on browser metadata at all;
+// it still self-heals via the metadata if those weren't provided (e.g. very old messages).
+function VoiceMessagePlayer({ src, isMe, duration: knownDuration, waveform: knownWaveform }) {
     const audioRef = useRef(null);
+    const barRef = useRef(null);
     const [playing, setPlaying] = useState(false);
-    const [duration, setDuration] = useState(0);
+    const [duration, setDuration] = useState(knownDuration && isFinite(knownDuration) ? knownDuration : 0);
     const [current, setCurrent] = useState(0);
     const [rate, setRate] = useState(1);
-    // A stable pseudo-random "waveform" derived from the URL, so it looks like a real waveform
-    // (and stays the same every render) without needing to decode the actual audio samples.
+    // Real captured waveform when we have one; otherwise a stable pseudo-random shape derived
+    // from the URL (only ever needed for messages sent before waveform capture existed).
     const bars = useMemo(() => {
+        if (knownWaveform && knownWaveform.length)
+            return knownWaveform;
         let seed = 0;
         for (let i = 0; i < src.length; i++)
             seed = (seed * 31 + src.charCodeAt(i)) >>> 0;
@@ -9542,7 +9598,7 @@ function VoiceMessagePlayer({ src, isMe }) {
             out.push(0.25 + ((seed % 100) / 100) * 0.75);
         }
         return out;
-    }, [src]);
+    }, [src, knownWaveform]);
     useEffect(() => {
         const a = audioRef.current;
         if (!a)
@@ -9551,9 +9607,9 @@ function VoiceMessagePlayer({ src, isMe }) {
         const onMeta = () => {
             if (a.duration && isFinite(a.duration)) { setDuration(a.duration); return; }
             // Chrome (and some other browsers) can't read the real duration of a MediaRecorder-
-            // produced webm/opus voice note from its metadata alone — it reports Infinity until
-            // the file is seeked once. Force that seek here so the duration resolves instead of
-            // getting stuck showing 0:00 forever.
+            // produced voice note from its metadata alone — it reports Infinity until the file
+            // is seeked once. Force that seek here so the duration resolves instead of getting
+            // stuck showing 0:00 forever. (Skipped entirely when we already have knownDuration.)
             if (a.duration === Infinity) {
                 const fixDuration = () => {
                     a.removeEventListener('timeupdate', fixDuration);
@@ -9564,8 +9620,8 @@ function VoiceMessagePlayer({ src, isMe }) {
                 a.currentTime = 1e101;
             }
         };
-        const onPlay = () => setPlaying(true);
-        const onPause = () => setPlaying(false);
+        const onPlay = () => { claimActiveVoiceAudio(a); setPlaying(true); };
+        const onPause = () => { setPlaying(false); if (__activeVoiceAudio === a) __activeVoiceAudio = null; };
         const onEnd = () => { setCurrent(0); };
         a.addEventListener('timeupdate', onTime);
         a.addEventListener('loadedmetadata', onMeta);
@@ -9575,27 +9631,33 @@ function VoiceMessagePlayer({ src, isMe }) {
         return () => { a.removeEventListener('timeupdate', onTime); a.removeEventListener('loadedmetadata', onMeta); a.removeEventListener('play', onPlay); a.removeEventListener('pause', onPause); a.removeEventListener('ended', onEnd); };
     }, []);
     // Driven by the audio element's own play/pause events (not an optimistic guess), so the
-    // button always reflects what's actually happening — this is what fixed the "sometimes
-    // it plays, sometimes it doesn't [but the icon changes anyway]" behavior.
+    // button always reflects what's actually happening.
     const toggle = () => { const a = audioRef.current; if (!a) return; if (a.paused) { a.play().catch(() => { }); } else { a.pause(); } };
-    const cycleRate = () => { const rates = [1, 1.5, 2, 0.5]; const next = rates[(rates.indexOf(rate) + 1) % rates.length]; setRate(next); if (audioRef.current) audioRef.current.playbackRate = next; };
+    const rates = [1, 1.5, 2];
+    const cycleRate = () => { const next = rates[(rates.indexOf(rate) + 1) % rates.length]; setRate(next); if (audioRef.current) audioRef.current.playbackRate = next; };
     const fmt = (s) => { if (!s || !isFinite(s)) return '0:00'; const m = Math.floor(s / 60); const sec = Math.floor(s % 60); return m + ':' + String(sec).padStart(2, '0'); };
     const progressRatio = duration ? Math.min(1, current / duration) : 0;
-    const seek = (e) => {
-        const rect = e.currentTarget.getBoundingClientRect();
-        const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
-        if (audioRef.current && duration) { audioRef.current.currentTime = ratio * duration; setCurrent(ratio * duration); }
+    // Pointer events unify mouse-drag and touch-drag so scrubbing feels native on mobile, not
+    // just a single tap-to-jump.
+    const seekAtClientX = (clientX) => {
+        const el = barRef.current;
+        if (!el || !duration) return;
+        const rect = el.getBoundingClientRect();
+        const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+        if (audioRef.current) { audioRef.current.currentTime = ratio * duration; setCurrent(ratio * duration); }
     };
+    const onBarPointerDown = (e) => { e.currentTarget.setPointerCapture(e.pointerId); seekAtClientX(e.clientX); };
+    const onBarPointerMove = (e) => { if (e.buttons !== 1) return; seekAtClientX(e.clientX); };
     const litBars = Math.round(progressRatio * bars.length);
-    return React.createElement("div", { className: "flex items-center gap-2 w-56" },
+    return React.createElement("div", { className: "flex items-center gap-2 w-56 max-w-full" },
         React.createElement("audio", { ref: audioRef, src: src, preload: "metadata", hidden: true }),
-        React.createElement("button", { onClick: toggle, className: "shrink-0 w-8 h-8 rounded-full flex items-center justify-center " + (isMe ? "bg-white/25 text-white" : "bg-[#0d9488]/15 text-[#0d9488]") },
+        React.createElement("button", { onClick: toggle, className: "shrink-0 w-9 h-9 rounded-full flex items-center justify-center shadow-sm " + (isMe ? "bg-white/25 text-white" : "bg-[#0d9488] text-white") },
             React.createElement("i", { className: "fa-solid " + (playing ? "fa-pause" : "fa-play") + " text-xs" + (playing ? "" : " ml-0.5") })),
         React.createElement("div", { className: "flex-1 min-w-0" },
-            React.createElement("div", { onClick: seek, className: "flex items-end gap-[2px] h-6 cursor-pointer" }, bars.map((h, i) => React.createElement("span", { key: i, style: { height: (h * 100) + '%' }, className: "flex-1 rounded-full " + (i < litBars ? (isMe ? "bg-white" : "bg-[#0d9488]") : (isMe ? "bg-white/35" : "bg-slate-300 dark:bg-ink-500")) }))),
+            React.createElement("div", { ref: barRef, onPointerDown: onBarPointerDown, onPointerMove: onBarPointerMove, className: "flex items-end gap-[2px] h-6 cursor-pointer touch-none" }, bars.map((h, i) => React.createElement("span", { key: i, style: { height: (Math.max(0.12, h) * 100) + '%' }, className: "flex-1 rounded-full transition-colors " + (i < litBars ? (isMe ? "bg-white" : "bg-[#0d9488]") : (isMe ? "bg-white/35" : "bg-slate-300 dark:bg-ink-500")) }))),
             React.createElement("div", { className: "flex items-center justify-between mt-0.5" },
-                React.createElement("span", { className: "text-[10px] " + (isMe ? "text-white/70" : "text-slate-400") }, fmt(playing || current ? current : duration)),
-                React.createElement("button", { onClick: cycleRate, className: "text-[10px] font-semibold px-1 rounded " + (isMe ? "text-white/80 hover:bg-white/15" : "text-slate-500 hover:bg-slate-100 dark:hover:bg-ink-600") }, rate + "x"))));
+                React.createElement("span", { className: "text-[10px] tabular-nums " + (isMe ? "text-white/70" : "text-slate-400") }, fmt(playing || current ? current : duration)),
+                React.createElement("button", { onClick: cycleRate, className: "text-[10px] font-semibold px-1.5 py-0.5 rounded-full border " + (isMe ? "text-white/90 border-white/30 hover:bg-white/15" : "text-[#0d9488] border-[#0d9488]/30 hover:bg-[#0d9488]/10") }, rate + "x"))));
 }
 function DateSeparator({ prev, curr }) {
     var _a, _b;
@@ -9695,7 +9757,7 @@ function MessageBubble({ message, isMe, otherUid, otherUser, showAvatar, groupPo
                 message.type === 'text' && React.createElement(LinkPreviewList, { text: message.text, max: 2 }),
                 message.type === 'image' && React.createElement("img", { src: message.mediaURL, onClick: () => openLightbox(message.mediaURL), loading: "lazy", className: "rounded-lg max-w-[240px] cursor-zoom-in" }),
                 message.type === 'video' && React.createElement(BoostedVideo, { src: message.mediaURL, controls: true, className: "rounded-lg max-w-[240px]" }),
-                message.type === 'audio' && React.createElement(VoiceMessagePlayer, { src: message.mediaURL, isMe: isMe }),
+                (message.type === 'audio' || message.type === 'voice') && React.createElement(VoiceMessagePlayer, { src: message.mediaURL, isMe: isMe, duration: message.duration, waveform: message.waveform }),
                 message.type === 'document' && (React.createElement("a", { href: message.mediaURL, target: "_blank", className: "flex items-center gap-2 " + (isMe ? "text-white" : "text-[#0d9488]") },
                     React.createElement("i", { className: "fa-solid fa-file-lines text-lg" }),
                     React.createElement("span", { className: "truncate max-w-[160px] underline" }, message.mediaName || 'Document'))),
@@ -9731,7 +9793,11 @@ function ChatWindow({ chatId, otherUid, pageId, go }) {
     const [emojiOpen, setEmojiOpen] = useState(false);
     const [recording, setRecording] = useState(false);
     const [recordSeconds, setRecordSeconds] = useState(0);
-    const [voicePreview, setVoicePreview] = useState(null); // { url, blob } — recorded, awaiting confirm/discard, like Facebook Messenger
+    const [liveLevels, setLiveLevels] = useState(() => new Array(24).fill(0.08));
+    // A recorded-but-not-yet-delivered voice note. status: 'review' (just stopped, awaiting
+    // send/discard) -> 'uploading' -> either cleared (on success, once the real message arrives
+    // via the messages listener below) or 'failed' (offers Retry, keeps the local recording).
+    const [voiceDraft, setVoiceDraft] = useState(null);
     const [uploading, setUploading] = useState(false);
     const [progress, setProgress] = useState(0);
     const [activeMenuId, setActiveMenuId] = useState(null);
@@ -9743,6 +9809,9 @@ function ChatWindow({ chatId, otherUid, pageId, go }) {
     const recorderRef = useRef();
     const chunksRef = useRef([]);
     const recordTimerRef = useRef();
+    const recordSecondsRef = useRef(0);
+    const recordedLevelsRef = useRef([]);
+    const recordAnalyserCleanupRef = useRef(null);
     const imageInputRef = useRef();
     const videoInputRef = useRef();
     const docInputRef = useRef();
@@ -9927,21 +9996,58 @@ function ChatWindow({ chatId, otherUid, pageId, go }) {
     const startRecording = async () => {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            const rec = new MediaRecorder(stream);
+            const mime = pickVoiceMimeType();
+            const rec = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
             recorderRef.current = rec;
             chunksRef.current = [];
-            rec.ondataavailable = e => chunksRef.current.push(e.data);
+            recordedLevelsRef.current = [];
+            // Live mic amplitude via an AnalyserNode — drives both the pulsing waveform bars
+            // shown *while* recording and the real waveform baked into the sent message
+            // (instead of a generic pulsing dot or a fake random shape).
+            try {
+                const AC = window.AudioContext || window.webkitAudioContext;
+                const ctx = new AC();
+                const source = ctx.createMediaStreamSource(stream);
+                const analyser = ctx.createAnalyser();
+                analyser.fftSize = 256;
+                source.connect(analyser);
+                const data = new Uint8Array(analyser.frequencyBinCount);
+                let raf;
+                const tick = () => {
+                    analyser.getByteTimeDomainData(data);
+                    let sum = 0;
+                    for (let i = 0; i < data.length; i++) { const v = (data[i] - 128) / 128; sum += v * v; }
+                    const level = Math.min(1, Math.sqrt(sum / data.length) * 4);
+                    recordedLevelsRef.current.push(level);
+                    setLiveLevels(prev => prev.slice(1).concat(level));
+                    raf = requestAnimationFrame(tick);
+                };
+                tick();
+                recordAnalyserCleanupRef.current = () => { cancelAnimationFrame(raf); try { ctx.close(); } catch (e) { } };
+            }
+            catch (e) { /* analyser unsupported — recording still works, just no live waveform */ }
+            rec.ondataavailable = e => { if (e.data && e.data.size) chunksRef.current.push(e.data); };
             rec.onstop = () => {
                 stream.getTracks().forEach(t => t.stop());
+                if (recordAnalyserCleanupRef.current) { recordAnalyserCleanupRef.current(); recordAnalyserCleanupRef.current = null; }
                 if (rec.__cancelled || chunksRef.current.length === 0)
                     return;
-                const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
-                setVoicePreview({ url: URL.createObjectURL(blob), blob });
+                const usedMime = mime || 'audio/webm';
+                const blob = new Blob(chunksRef.current, { type: usedMime });
+                setVoiceDraft({
+                    id: db.collection('chats').doc(chatId).collection('messages').doc().id,
+                    url: URL.createObjectURL(blob), blob, mime: usedMime,
+                    duration: recordSecondsRef.current,
+                    waveform: downsampleWaveform(recordedLevelsRef.current, 32),
+                    status: 'review', progress: 0
+                });
             };
             rec.start();
             setRecording(true);
             setRecordSeconds(0);
-            recordTimerRef.current = setInterval(() => setRecordSeconds(s => s + 1), 1000);
+            recordSecondsRef.current = 0;
+            setLiveLevels(new Array(24).fill(0.08));
+            recordTimerRef.current = setInterval(() => setRecordSeconds(s => { recordSecondsRef.current = s + 1; return s + 1; }), 1000);
         }
         catch (e) {
             toast('Microphone access denied', 'error');
@@ -9955,19 +10061,53 @@ function ChatWindow({ chatId, otherUid, pageId, go }) {
             recorderRef.current.stop();
         }
     };
-    const discardVoicePreview = () => {
-        if (voicePreview)
-            URL.revokeObjectURL(voicePreview.url);
-        setVoicePreview(null);
+    const discardVoiceDraft = () => {
+        setVoiceDraft(d => { if (d) URL.revokeObjectURL(d.url); return null; });
     };
-    const sendVoicePreview = async () => {
-        if (!voicePreview)
-            return;
-        const file = new File([voicePreview.blob], `voice-${Date.now()}.webm`, { type: 'audio/webm' });
-        URL.revokeObjectURL(voicePreview.url);
-        setVoicePreview(null);
-        await uploadAndSend(file, 'audio');
+    // Uploads to chat-media/{chatId}/voice/{messageId}.ext and writes the Firestore message
+    // using that same id — so re-invoking this (Retry) is safe and never creates a duplicate
+    // message, it just re-attempts the same send.
+    const uploadVoiceDraft = async (draft) => {
+        if (blocked) { toast("You can't message this user", 'error'); return; }
+        setVoiceDraft(d => (d && d.id === draft.id) ? Object.assign({}, d, { status: 'uploading', progress: 0 }) : d);
+        try {
+            const ext = extForVoiceMime(draft.mime);
+            const path = `chat-media/${chatId}/voice/${draft.id}.${ext}`;
+            const ref = storage.ref(path);
+            await new Promise((resolve, reject) => {
+                const task = ref.put(draft.blob, { contentType: draft.mime || 'audio/webm' });
+                task.on('state_changed', s => setVoiceDraft(d => (d && d.id === draft.id) ? Object.assign({}, d, { progress: Math.round((s.bytesTransferred / s.totalBytes) * 100) }) : d), reject, resolve);
+            });
+            const url = await ref.getDownloadURL();
+            const payload = { type: 'voice', mediaURL: url, mediaName: `voice-note.${ext}`, mediaSize: draft.blob.size, duration: draft.duration, waveform: draft.waveform };
+            if (replyTo)
+                payload.replyTo = { id: replyTo.id, text: replyTo.text || ('[' + replyTo.type + ']'), senderId: replyTo.senderId };
+            await sendChatMessage(profile.id, chatId, otherUid, payload, draft.id);
+            setReplyTo(null);
+            // voiceDraft itself is cleared by the effect below once the real message shows up in
+            // `messages` — avoids a flicker where this bubble vanishes before the synced one appears.
+        }
+        catch (e) {
+            setVoiceDraft(d => (d && d.id === draft.id) ? Object.assign({}, d, { status: 'failed', progress: 0 }) : d);
+            toast(friendlyError(e), 'error');
+        }
     };
+    const sendVoiceDraft = () => { if (voiceDraft && voiceDraft.status !== 'uploading') uploadVoiceDraft(voiceDraft); };
+    const retryVoiceDraft = () => { if (voiceDraft && voiceDraft.status !== 'uploading') uploadVoiceDraft(voiceDraft); };
+    // Once the message we sent shows up in the live message list, the draft has done its job.
+    useEffect(() => {
+        if (voiceDraft && messages && messages.some(m => m.id === voiceDraft.id)) {
+            URL.revokeObjectURL(voiceDraft.url);
+            setVoiceDraft(null);
+        }
+    }, [messages]);
+    const voiceDraftRef = useRef(null);
+    useEffect(() => { voiceDraftRef.current = voiceDraft; }, [voiceDraft]);
+    // Clean up the object URL and any in-flight analyser if the chat is left mid-recording/review.
+    useEffect(() => () => {
+        if (recordAnalyserCleanupRef.current) recordAnalyserCleanupRef.current();
+        if (voiceDraftRef.current) URL.revokeObjectURL(voiceDraftRef.current.url);
+    }, []);
     const deleteForMe = (m) => db.collection('chats').doc(chatId).collection('messages').doc(m.id).update({ deletedFor: FieldValue.arrayUnion(profile.id) });
     // "Delete for everyone" (unsend) keeps the message doc (so ordering/read-receipts stay
     // intact) but flags it and strips the content, so MessageBubble renders the muted
@@ -10079,21 +10219,29 @@ function ChatWindow({ chatId, otherUid, pageId, go }) {
                     uploadAndSend(e.target.files[0], 'video'); e.target.value = ''; } }),
             React.createElement("input", { ref: docInputRef, type: "file", accept: ".pdf,.doc,.docx,.zip,.txt,.xlsx,.pptx", hidden: true, onChange: e => { if (e.target.files[0])
                     uploadAndSend(e.target.files[0], 'document'); e.target.value = ''; } }),
-            recording ? (React.createElement("div", { className: "flex items-center gap-3 bg-red-50 dark:bg-red-900/20 rounded-full px-4 py-2" },
-                React.createElement("span", { className: "w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse" }),
-                React.createElement("span", { className: "text-sm text-red-500 flex-1" },
-                    "Recording\u2026 ",
+            recording ? (React.createElement("div", { className: "flex items-center gap-2.5 bg-red-50 dark:bg-red-900/20 rounded-full pl-3 pr-2 py-2" },
+                React.createElement("span", { className: "w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse shrink-0" }),
+                React.createElement("span", { className: "text-sm text-red-500 tabular-nums shrink-0" },
                     Math.floor(recordSeconds / 60),
                     ":",
                     String(recordSeconds % 60).padStart(2, '0')),
-                React.createElement("button", { onClick: () => stopRecording(true), className: "text-slate-400 text-sm" }, "Cancel"),
-                React.createElement("button", { onClick: () => stopRecording(false), title: "Stop recording", className: "bg-brand-600 text-white rounded-full w-8 h-8 flex items-center justify-center" },
-                    React.createElement("i", { className: "fa-solid fa-check text-xs" })))) : voicePreview ? (React.createElement("div", { className: "flex items-center gap-2 bg-[#F0F0F0] dark:bg-ink-700 rounded-full pl-1 pr-2 py-1.5" },
-                React.createElement("button", { onClick: discardVoicePreview, title: "Delete recording", className: "text-red-500 w-8 h-8 flex items-center justify-center shrink-0" },
+                React.createElement("div", { className: "flex-1 flex items-end gap-[2px] h-6 min-w-0" }, liveLevels.map((v, i) => React.createElement("span", { key: i, style: { height: (8 + v * 92) + '%' }, className: "flex-1 rounded-full bg-red-400 transition-all duration-75" }))),
+                React.createElement("button", { onClick: () => stopRecording(true), title: "Cancel", className: "text-slate-400 hover:text-red-500 w-8 h-8 flex items-center justify-center shrink-0" },
                     React.createElement("i", { className: "fa-solid fa-trash text-sm" })),
-                React.createElement("div", { className: "flex-1 min-w-0" }, React.createElement(VoiceMessagePlayer, { src: voicePreview.url, isMe: false })),
-                React.createElement("button", { onClick: sendVoicePreview, disabled: uploading, title: "Send voice note", className: "bg-brand-600 text-white rounded-full w-9 h-9 flex items-center justify-center shrink-0 disabled:opacity-50" },
-                    React.createElement("i", { className: "fa-solid fa-paper-plane text-xs" })))) : (React.createElement("div", { className: "flex items-center gap-2" },
+                React.createElement("button", { onClick: () => stopRecording(false), title: "Stop recording", className: "bg-brand-600 text-white rounded-full w-9 h-9 flex items-center justify-center shrink-0" },
+                    React.createElement("i", { className: "fa-solid fa-check text-sm" })))) : voiceDraft ? (React.createElement("div", { className: "flex flex-col gap-1" },
+                voiceDraft.status === 'failed' && React.createElement("p", { className: "text-[11px] text-red-500 px-3" }, "Couldn't send \u00B7 tap ", React.createElement("i", { className: "fa-solid fa-rotate-right mx-0.5" }), " to retry"),
+                React.createElement("div", { className: "flex items-center gap-2 bg-[#F0F0F0] dark:bg-ink-700 rounded-full pl-1 pr-2 py-1.5" },
+                    voiceDraft.status !== 'uploading' && React.createElement("button", { onClick: discardVoiceDraft, title: "Delete recording", className: "text-red-500 w-8 h-8 flex items-center justify-center shrink-0" },
+                        React.createElement("i", { className: "fa-solid fa-trash text-sm" })),
+                    voiceDraft.status === 'uploading' ? (React.createElement("div", { className: "flex-1 min-w-0 flex items-center gap-2 pl-2" },
+                        React.createElement("i", { className: "fa-solid fa-circle-notch fa-spin text-[#0d9488] text-sm shrink-0" }),
+                        React.createElement("span", { className: "text-xs text-slate-500 dark:text-slate-300 flex-1" }, "Uploading\u2026"),
+                        React.createElement("span", { className: "text-xs text-slate-400 tabular-nums shrink-0" }, voiceDraft.progress + "%"))) : (React.createElement("div", { className: "flex-1 min-w-0" }, React.createElement(VoiceMessagePlayer, { src: voiceDraft.url, isMe: false, duration: voiceDraft.duration, waveform: voiceDraft.waveform }))),
+                    voiceDraft.status === 'failed' && React.createElement("button", { onClick: retryVoiceDraft, title: "Retry", className: "text-amber-500 w-8 h-8 flex items-center justify-center shrink-0" },
+                        React.createElement("i", { className: "fa-solid fa-rotate-right text-sm" })),
+                    voiceDraft.status !== 'failed' && React.createElement("button", { onClick: sendVoiceDraft, disabled: voiceDraft.status === 'uploading', title: "Send voice note", className: "bg-brand-600 text-white rounded-full w-9 h-9 flex items-center justify-center shrink-0 disabled:opacity-50" },
+                        React.createElement("i", { className: "fa-solid fa-paper-plane text-xs" }))))) : (React.createElement("div", { className: "flex items-center gap-2" },
                 React.createElement("button", { onClick: () => { setAttachOpen(a => !a); setEmojiOpen(false); }, disabled: blocked, className: "text-[#0d9488] w-9 h-9 flex items-center justify-center disabled:opacity-40 text-lg" },
                     React.createElement("i", { className: "fa-solid fa-circle-plus" })),
                 React.createElement("button", { onClick: () => { imageInputRef.current.click(); }, disabled: blocked, className: "text-[#0d9488] w-9 h-9 hidden sm:flex items-center justify-center disabled:opacity-40 text-lg" },
@@ -10131,6 +10279,8 @@ function ForwardModal({ message, onClose }) {
                 payload.mediaURL = message.mediaURL;
                 payload.mediaName = message.mediaName || '';
                 payload.mediaSize = message.mediaSize || 0;
+                if (message.duration) payload.duration = message.duration;
+                if (message.waveform) payload.waveform = message.waveform;
             }
             payload.forwardedFrom = { chatId: message.id, originalSenderId: message.senderId };
             await sendChatMessage(profile.id, row.chatId, row.otherUid, payload);
