@@ -1917,19 +1917,15 @@ const YELOFACE_OFFICIAL_PAGE_ID = 'yeloface-official';
 async function ensureYelofaceOfficialPage(adminUid) {
     const ref = db.collection('fanPages').doc(YELOFACE_OFFICIAL_PAGE_ID);
     const snap = await ref.get();
-    if (snap.exists) {
-        // Self-heal: the Page's ownerId is used as the real, authenticated account behind
-        // "Yeloface" for messaging (see AdminYelofaceChatThread). If it was ever created under
-        // a different account than the current super admin (e.g. during testing), every
-        // "Reply as Yeloface" message would silently be sent from that old account instead —
-        // showing up under that account's real name rather than "Yeloface" or the current
-        // admin. Since only SUPER_ADMIN_UID can ever reach this code path, keep ownerId synced
-        // to whoever is actually signed in as the super admin right now.
-        if (snap.data().ownerId !== adminUid) {
-            await ref.set({ ownerId: adminUid }, { merge: true });
-        }
-        return;
-    }
+    // NOTE: deliberately NOT reassigning ownerId here if the Page already exists. All existing
+    // "Yeloface" chats (chatId, chatMembers, message history) are keyed off whichever real uid
+    // is currently stored as ownerId. Silently reassigning it would make every existing
+    // conversation invisible to the admin panel (it queries chatMembers by ownerId), even
+    // though the data isn't lost. If you need "Reply as Yeloface" to be sent from a different
+    // real account than whatever currently owns the Page, that's a deliberate one-time data
+    // migration (reassigning ownerId AND migrating the chatMembers/chats docs to the new uid),
+    // not something to do automatically on every panel load.
+    if (snap.exists) return;
     await ref.set(Object.assign({
         ownerId: adminUid, displayName: 'Yeloface', username: 'yeloface',
         category: 'Community', bio: 'Official updates from the Yeloface team.',
@@ -6183,14 +6179,12 @@ function Comments({ postId, go }) {
 // readable on a phone screen, while still remaining fully threaded in the data.
 function CommentThread({ comment, allComments, depth, go, postComment }) {
     const { profile } = useAuth();
-    // Comments authored by the official "Yeloface" identity (posted from the Super Admin
-    // panel) use a fixed, hardcoded author snapshot instead of looking up a Firestore user
-    // doc. There deliberately is no "users/yeloface-official" document — creating one would
-    // require writing to a users/{id} doc whose id isn't the writer's own auth uid, which
-    // Firestore's security rules (uid-must-match-doc-id) reject. Hardcoding the identity here
-    // means the "Yeloface" comment renders correctly regardless of what Firestore rules allow,
-    // and doesn't depend on any admin-only write succeeding first.
-    const isOfficial = comment.authorId === YELOFACE_OFFICIAL_PAGE_ID;
+    // Comments posted "as Yeloface" from the Super Admin panel are written under the admin's
+    // own real uid (authorId) so the write satisfies normal Firestore rules — but carry a
+    // separate `officialAs` flag so they render with the "Yeloface" identity instead of the
+    // admin's personal profile. This is purely a display override: no Firestore doc lookup is
+    // needed or possible for a fixed non-self id, so a hardcoded snapshot is used instead.
+    const isOfficial = comment.officialAs === YELOFACE_OFFICIAL_PAGE_ID;
     const officialAuthor = { displayName: 'Yeloface', username: 'yeloface', photoURL: (typeof window !== 'undefined' ? window.YELOFACE_MARK : null), verified: true };
     const [author, setAuthor] = useState(isOfficial ? officialAuthor : null);
     const [replying, setReplying] = useState(false);
@@ -6204,13 +6198,17 @@ function CommentThread({ comment, allComments, depth, go, postComment }) {
     const indent = Math.min(depth, 3) * 28;
     if (!author)
         return null;
+    // For an official comment, authorId is the admin's real personal uid (see above) — tapping
+    // the name/avatar should go to the public "Yeloface" page, not expose the admin's own
+    // personal profile.
+    const goToAuthor = () => isOfficial ? go({ name: 'page', id: YELOFACE_OFFICIAL_PAGE_ID }) : go({ name: 'profile', uid: comment.authorId });
     return (React.createElement("div", { style: { marginLeft: indent } },
         React.createElement("div", { className: "flex items-start gap-2" },
-            React.createElement(Avatar, { user: author, size: 7, onClick: () => go({ name: 'profile', uid: comment.authorId }) }),
+            React.createElement(Avatar, { user: author, size: 7, onClick: goToAuthor }),
             React.createElement("div", { className: "flex-1 min-w-0" },
                 React.createElement("div", { className: (isOfficial ? "bg-brand-50 dark:bg-brand-900/20 border border-brand-100 dark:border-brand-800" : "bg-slate-50 dark:bg-ink-700") + " rounded-2xl px-3 py-2 inline-block max-w-full" },
                     React.createElement("p", { className: "text-xs font-semibold" },
-                        React.createElement("span", { className: "cursor-pointer" + (isOfficial ? " text-brand-600" : ""), onClick: () => go({ name: 'profile', uid: comment.authorId }) }, author.displayName),
+                        React.createElement("span", { className: "cursor-pointer" + (isOfficial ? " text-brand-600" : ""), onClick: goToAuthor }, author.displayName),
                         isOfficial && React.createElement("i", { className: "fa-solid fa-badge-check text-brand-500 text-[11px] ml-1" }),
                         " ",
                         React.createElement("span", { className: "text-slate-400 font-normal ml-1" }, timeAgo(comment.createdAt))),
@@ -9364,16 +9362,15 @@ function AdminPostRow({ post, adminUid, adminEmail }) {
         if (!text || !adminUid) return;
         setCommentBusy(true);
         try {
-            // Commented as the official "Yeloface" identity (not the admin's personal account)
-            // so it reads the same as any other official Page comment site-wide — see
-            // CommentThread's isOfficial rendering, which uses a hardcoded author snapshot
-            // and does not depend on a "users/yeloface-official" Firestore doc existing.
-            // (Deliberately not calling ensureYelofaceSystemUser here: writing to a fixed,
-            // non-self uid under `users/` is rejected by Firestore's security rules for any
-            // account, admin included, and previously caused this whole comment to fail with
-            // a permission error before ever being created.)
+            // Written under the admin's own real uid so it satisfies standard Firestore rules
+            // requiring a comment's authorId to match the writer (request.auth.uid) — the
+            // earlier version wrote authorId as the fixed 'yeloface-official' id, which never
+            // equals the signed-in admin's uid and was rejected outright, silently blocking
+            // every admin comment. `officialAs` is a separate, purely cosmetic flag that tells
+            // CommentThread to render this as the "Yeloface" identity instead of the admin's
+            // personal profile — see CommentThread's isOfficial check.
             const commentRef = await db.collection('posts').doc(post.id).collection('comments').add({
-                authorId: YELOFACE_OFFICIAL_PAGE_ID, text, bold: false, taggedUsers: [], image: null,
+                authorId: adminUid, officialAs: YELOFACE_OFFICIAL_PAGE_ID, text, bold: false, taggedUsers: [], image: null,
                 parentId: null, replyToDisplayName: null, createdAt: FieldValue.serverTimestamp()
             });
             db.collection('posts').doc(post.id).update({ commentsCount: FieldValue.increment(1) }).catch(() => { });
@@ -9413,8 +9410,8 @@ function AdminPostRow({ post, adminUid, adminEmail }) {
         commentsOpen && React.createElement("div", { className: "mt-2 space-y-1.5 max-h-56 overflow-y-auto border-t border-slate-100 dark:border-ink-700 pt-2" },
             comments.length === 0 ? React.createElement("p", { className: "text-[11px] text-slate-400" }, "No comments yet.") :
                 comments.map(c => React.createElement("div", { key: c.id, className: "text-xs" },
-                    React.createElement("span", { className: "font-semibold" + (c.authorId === YELOFACE_OFFICIAL_PAGE_ID ? " text-brand-600" : "") }, React.createElement(AdminUserLabel, { uid: c.authorId })),
-                    c.authorId === YELOFACE_OFFICIAL_PAGE_ID && React.createElement("i", { className: "fa-solid fa-badge-check text-brand-500 text-[10px] ml-1" }), " ",
+                    React.createElement("span", { className: "font-semibold" + (c.officialAs === YELOFACE_OFFICIAL_PAGE_ID ? " text-brand-600" : "") }, c.officialAs === YELOFACE_OFFICIAL_PAGE_ID ? 'Yeloface' : React.createElement(AdminUserLabel, { uid: c.authorId })),
+                    c.officialAs === YELOFACE_OFFICIAL_PAGE_ID && React.createElement("i", { className: "fa-solid fa-badge-check text-brand-500 text-[10px] ml-1" }), " ",
                     React.createElement("span", { className: "text-slate-500 dark:text-slate-400" }, c.text)))));
 }
 /* ============================== SUPER ADMIN: ANNOUNCEMENTS ============================== */
@@ -9523,10 +9520,6 @@ function AdminPostAsYelofaceForm({ adminUid, adminEmail }) {
 function AdminYelofaceMessagesPanel({ adminUid, adminEmail }) {
     const toast = useToast();
     const [yelofacePage, setYelofacePage] = useState(undefined);
-    // Re-syncs the Page's ownerId to the current admin if it ever drifted to a different
-    // account (see ensureYelofaceOfficialPage) — run on entering this tab too, not just from
-    // "Post as Yeloface", so replies are correctly attributed even if the admin never posts.
-    useEffect(() => { ensureYelofaceOfficialPage(adminUid).catch(() => { }); }, [adminUid]);
     useEffect(() => {
         const unsub = db.collection('fanPages').doc(YELOFACE_OFFICIAL_PAGE_ID)
             .onSnapshot(s => setYelofacePage(s.exists ? Object.assign({ id: s.id }, s.data()) : null), () => setYelofacePage(null));
