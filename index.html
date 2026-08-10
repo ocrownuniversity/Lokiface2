@@ -4950,9 +4950,9 @@ function ProgressBar({ value, max, colorClass = 'bg-brand-600' }) {
     return React.createElement("div", { className: "w-full h-2.5 rounded-full bg-slate-100 dark:bg-ink-700 overflow-hidden" },
         React.createElement("div", { className: colorClass + " h-full rounded-full transition-all", style: { width: pct + '%' } }));
 }
-function Avatar({ user, size = 10, onClick }) {
+function Avatar({ user, size = 10, onClick, className = '' }) {
     const src = (user === null || user === void 0 ? void 0 : user.photoURL) || `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent((user === null || user === void 0 ? void 0 : user.displayName) || (user === null || user === void 0 ? void 0 : user.username) || '?')}&backgroundColor=b6e3f4,c0aede,d1d4f9,ffd5dc,ffdfbf`;
-    return React.createElement("img", { onClick: onClick, src: src, className: `w-${size} h-${size} rounded-lg object-cover shrink-0 ${onClick ? 'cursor-pointer' : ''}`, style: { width: size * 4, height: size * 4 } });
+    return React.createElement("img", { onClick: onClick, src: src, className: `w-${size} h-${size} rounded-lg object-cover shrink-0 ${onClick ? 'cursor-pointer' : ''} ${className}`, style: { width: size * 4, height: size * 4 } });
 }
 /* ============================== FRIEND ACTION BUTTON ============================== */
 function FriendActionButton({ meId, otherId, compact }) {
@@ -6168,7 +6168,11 @@ function Comments({ postId, go }) {
         }
         notifyTagged(tagged, profile.id, postId, 'tag');
     };
-    const topLevel = comments.filter(c => !c.parentId);
+    // Official "Yeloface" replies are pinned to the top of the thread, like a Page reply on
+    // Facebook — comments already come from Firestore in chronological order, so within each
+    // group (official vs. everyone else) that original order is preserved.
+    const topLevel = comments.filter(c => !c.parentId)
+        .sort((a, b) => (b.officialAs === YELOFACE_OFFICIAL_PAGE_ID ? 1 : 0) - (a.officialAs === YELOFACE_OFFICIAL_PAGE_ID ? 1 : 0));
     return (React.createElement("div", { className: "mt-3 pt-3 border-t border-slate-100 dark:border-ink-700 space-y-3" },
         topLevel.map(c => React.createElement(CommentThread, { key: c.id, comment: c, allComments: comments, depth: 0, go: go, postComment: postComment })),
         React.createElement(CommentComposer, { avatarUser: profile, onSubmit: (p) => postComment(Object.assign({}, p, { parentId: null })) })));
@@ -6204,16 +6208,17 @@ function CommentThread({ comment, allComments, depth, go, postComment }) {
     const goToAuthor = () => isOfficial ? go({ name: 'page', id: YELOFACE_OFFICIAL_PAGE_ID }) : go({ name: 'profile', uid: comment.authorId });
     return (React.createElement("div", { style: { marginLeft: indent } },
         React.createElement("div", { className: "flex items-start gap-2" },
-            React.createElement(Avatar, { user: author, size: 7, onClick: goToAuthor }),
+            React.createElement("div", { className: isOfficial ? "rounded-full p-[2px] bg-gradient-to-br from-brand-400 via-amber-400 to-brand-600 shrink-0" : "shrink-0" },
+                React.createElement(Avatar, { user: author, size: 7, onClick: goToAuthor, className: isOfficial ? "ring-2 ring-white dark:ring-ink-800" : undefined })),
             React.createElement("div", { className: "flex-1 min-w-0" },
-                React.createElement("div", { className: (isOfficial ? "bg-brand-50 dark:bg-brand-900/20 border border-brand-100 dark:border-brand-800" : "bg-slate-50 dark:bg-ink-700") + " rounded-2xl px-3 py-2 inline-block max-w-full" },
-                    React.createElement("p", { className: "text-xs font-semibold" },
-                        React.createElement("span", { className: "cursor-pointer" + (isOfficial ? " text-brand-600" : ""), onClick: goToAuthor }, author.displayName),
-                        isOfficial && React.createElement("i", { className: "fa-solid fa-badge-check text-brand-500 text-[11px] ml-1" }),
-                        " ",
-                        React.createElement("span", { className: "text-slate-400 font-normal ml-1" }, timeAgo(comment.createdAt))),
+                React.createElement("div", { className: (isOfficial ? "bg-gradient-to-br from-brand-50 to-amber-50 dark:from-brand-900/30 dark:to-amber-900/10 border-2 border-brand-200 dark:border-brand-700 shadow-sm" : "bg-slate-50 dark:bg-ink-700") + " rounded-2xl px-3 py-2 inline-block max-w-full" },
+                    React.createElement("p", { className: "text-xs font-semibold flex items-center flex-wrap gap-1" },
+                        React.createElement("span", { className: "cursor-pointer" + (isOfficial ? " text-brand-700 dark:text-brand-300 font-extrabold tracking-tight" : ""), onClick: goToAuthor }, author.displayName),
+                        isOfficial && React.createElement("i", { className: "fa-solid fa-badge-check text-brand-500 text-xs" }),
+                        isOfficial && React.createElement("span", { className: "text-[9px] font-bold uppercase tracking-wide text-white bg-gradient-to-r from-brand-600 to-brand-500 px-1.5 py-0.5 rounded-full" }, "Official"),
+                        React.createElement("span", { className: "text-slate-400 font-normal" }, timeAgo(comment.createdAt))),
                     React.createElement(TaggedLine, { users: comment.taggedUsers, go: go }),
-                    comment.text && (React.createElement("p", { className: "text-sm " + (comment.bold ? 'font-bold' : '') },
+                    comment.text && (React.createElement("p", { className: "text-sm " + (isOfficial ? 'font-semibold' : comment.bold ? 'font-bold' : '') },
                         comment.replyToDisplayName && React.createElement("span", { className: "text-brand-600 font-semibold mr-1" }, "@" + comment.replyToDisplayName),
                         formatRichText(comment.text))),
                     comment.image && React.createElement("img", { src: comment.image, onClick: () => openLightbox(comment.image), loading: "lazy", className: "mt-1.5 rounded-lg max-h-56 max-w-full object-cover cursor-zoom-in" })),
