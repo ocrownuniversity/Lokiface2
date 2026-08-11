@@ -6,13 +6,13 @@
 <title>Fic Store | Premium Online Shopping in Nigeria</title>
 <meta name="description" content="Fic Store — Nigeria's trusted destination for premium products, fast nationwide delivery and secure shopping. Quality you can trust, prices you'll love.">
 <meta name="keywords" content="Fic Store, Fic Import, online shopping Nigeria, Lagos online store, Egbeda ecommerce, premium products Nigeria">
-<meta name="theme-color" content="#A52C71">
+<meta name="theme-color" content="#D6127E">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Fic Store">
 <link rel="manifest" href="manifest.json">
-<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23c94f8c'/%3E%3Cstop offset='1' stop-color='%236b1c49'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='100' height='100' rx='22' fill='url(%23g)'/%3E%3Ctext x='50' y='68' font-family='Poppins,Arial,sans-serif' font-size='54' font-weight='800' fill='white' text-anchor='middle'%3EF%3C/text%3E%3C/svg%3E">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23FF5FA8'/%3E%3Cstop offset='1' stop-color='%236B14A8'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='100' height='100' rx='22' fill='url(%23g)'/%3E%3Ctext x='50' y='68' font-family='Poppins,Arial,sans-serif' font-size='54' font-weight='800' fill='white' text-anchor='middle'%3EF%3C/text%3E%3C/svg%3E">
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
 <link rel="icon" type="image/png" sizes="512x512" href="icon-512.png">
@@ -20,10 +20,16 @@
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
 <style>
 :root {
-  --ficstore-logo: url('data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27%3E%3Cdefs%3E%3ClinearGradient id=%27g%27 x1=%270%27 y1=%270%27 x2=%271%27 y2=%271%27%3E%3Cstop offset=%270%27 stop-color=%27%23c94f8c%27/%3E%3Cstop offset=%271%27 stop-color=%27%236b1c49%27/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width=%27100%27 height=%27100%27 rx=%2722%27 fill=%27url(%23g)%27/%3E%3Ctext x=%2750%27 y=%2768%27 font-family=%27Poppins,Arial,sans-serif%27 font-size=%2754%27 font-weight=%27800%27 fill=%27white%27 text-anchor=%27middle%27%3EF%3C/text%3E%3C/svg%3E');
-  --orange: #a52c71;
-  --orange-light: #c94f8c;
-  --orange-dark: #6b1c49;
+  --ficstore-logo: url('data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27%3E%3Cdefs%3E%3ClinearGradient id=%27g%27 x1=%270%27 y1=%270%27 x2=%271%27 y2=%271%27%3E%3Cstop offset=%270%27 stop-color=%27%23FF5FA8%27/%3E%3Cstop offset=%271%27 stop-color=%27%236B14A8%27/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width=%27100%27 height=%27100%27 rx=%2722%27 fill=%27url(%23g)%27/%3E%3Ctext x=%2750%27 y=%2768%27 font-family=%27Poppins,Arial,sans-serif%27 font-size=%2754%27 font-weight=%27800%27 fill=%27white%27 text-anchor=%27middle%27%3EF%3C/text%3E%3C/svg%3E');
+  --orange: #D6127E;
+  --orange-light: #FF5FA8;
+  --orange-dark: #6B14A8;
+  --purple: #8B2FC9;
+  --purple-light: #B565E8;
+  --purple-dark: #4B1279;
+  --pink: #D6127E;
+  --pink-light: #FF5FA8;
+  --brand-gradient: linear-gradient(135deg, #D6127E 0%, #8B2FC9 100%);
   --white: #ffffff;
   --gray-50: #f9fafb;
   --gray-100: #f3f4f6;
@@ -644,9 +650,9 @@ body.dark-mode .hero-slider-skel::after{background-color:var(--surface)}
 @media(min-width:768px){.hero-slider{height:320px;margin:16px 20px}}
 .slides-container{display:flex;transition:transform .5s cubic-bezier(.4,0,.2,1);height:100%;will-change:transform}
 .slide{min-width:100%;width:100%;height:100%;display:flex;align-items:center;padding:22px 24px;position:relative;overflow:hidden;flex-shrink:0;box-sizing:border-box}
-.slide-1{background:linear-gradient(110deg,#a52c71 0%,#e0609d 100%)}
-.slide-2{background:linear-gradient(120deg,#1a1a2e,#16213e)}
-.slide-3{background:linear-gradient(120deg,#0f3460,#533483)}
+.slide-1{background:linear-gradient(110deg,#D6127E 0%,#8B2FC9 100%)}
+.slide-2{background:linear-gradient(120deg,#4B1279,#8B2FC9)}
+.slide-3{background:linear-gradient(120deg,#8B2FC9,#D6127E)}
 .slide-content{z-index:2;max-width:52%;min-width:0;flex-shrink:0}
 .slide-content h2{font-size:clamp(16px,4.5vw,28px);font-weight:900;line-height:1.2;margin-bottom:6px;color:#fff;font-family:'Poppins',sans-serif;word-break:break-word}
 .slide-content p{font-size:clamp(10px,2.5vw,13px);opacity:.92;margin-bottom:12px;color:rgba(255,255,255,.9);line-height:1.4;word-break:break-word}
@@ -777,7 +783,7 @@ body.dark-mode #pwreset-audit-log { background: #111 !important; border-color: #
 .hamburger{color:var(--gray-800)!important;font-size:22px!important;background:none!important;border:none!important;padding:0!important}
 #logo-text,#header-logo-img{cursor:pointer!important;display:inline-block!important;vertical-align:middle!important;height:40px!important;width:auto!important;max-width:150px!important}
 .hicon{background:transparent!important;color:var(--gray-700)!important;font-size:22px!important;padding:4px 6px!important;border:none!important}
-.hicon .badge{background:#a52c71!important;color:#fff!important;top:-5px!important;right:-4px!important;width:17px!important;height:17px!important;font-size:9px!important}
+.hicon .badge{background:#D6127E!important;color:#fff!important;top:-5px!important;right:-4px!important;width:17px!important;height:17px!important;font-size:9px!important}
 .hicon-label{display:none!important}
 .header-icons{gap:6px!important}
 
@@ -787,7 +793,7 @@ body.dark-mode #pwreset-audit-log { background: #111 !important; border-color: #
 .header-search{background:transparent!important;border:none!important;padding:12px 0!important;font-size:13px!important;flex:1!important;outline:none!important;color:var(--gray-700)!important}
 .header-search::placeholder{color:#aaa!important;font-size:13px!important}
 .header-search-btn{background:transparent!important;color:#aaa!important;border:none!important;font-size:16px!important;padding:0!important;display:flex!important;align-items:center!important;cursor:pointer!important}
-.header-search-btn:hover{color:#a52c71!important}
+.header-search-btn:hover{color:#D6127E!important}
 
 /* HERO SLIDER — mobile tweaks only */
 .hero-slider{border-radius:10px!important;margin:0 14px 0!important;height:180px!important}
@@ -799,7 +805,7 @@ body.dark-mode #pwreset-audit-log { background: #111 !important; border-color: #
 .home-section{background:var(--bg)!important;margin:8px 0 0!important;padding:14px 12px 16px!important}
 .home-section-title{font-size:16px!important;font-weight:800!important;color:var(--text)!important;font-family:'Poppins',sans-serif!important;margin-bottom:4px!important}
 .home-section-header{margin-bottom:14px!important}
-.home-see-all{color:#a52c71!important;font-size:13px!important;font-weight:700!important;white-space:nowrap!important;padding-top:2px!important}
+.home-see-all{color:#D6127E!important;font-size:13px!important;font-weight:700!important;white-space:nowrap!important;padding-top:2px!important}
 #flash-section .home-see-all{color:#f97316!important}
 
 /* FLASH SECTION */
@@ -814,20 +820,22 @@ body.dark-mode #pwreset-audit-log { background: #111 !important; border-color: #
 .product-grid{display:grid!important;grid-template-columns:repeat(3,1fr)!important;gap:8px!important;padding:0 2px!important}
 
 /* PRODUCT CARD — pixel-perfect match to screenshot */
-.pc{background:#fff;border-radius:12px;overflow:hidden;cursor:pointer;display:flex;flex-direction:column;box-shadow:0 2px 8px rgba(0,0,0,.06);border:none;transition:box-shadow .2s}
-.pc:active{box-shadow:0 1px 3px rgba(0,0,0,.1)}
-.pc-img-wrap{position:relative;width:100%;aspect-ratio:1/1;background:#f5f5f5;overflow:hidden;flex-shrink:0}
-.pc-img-wrap img{width:100%;height:100%;object-fit:cover;display:block}
-.pc-badge{position:absolute;top:7px;left:7px;background:#a52c71;color:#fff;font-size:10px;font-weight:800;padding:2px 7px;border-radius:4px;z-index:2;letter-spacing:.3px}
-#flash-grid .pc-badge{background:#f97316}
-.pc-body{padding:7px 8px 9px;display:flex;flex-direction:column;gap:3px;flex:1}
-.pc-name{font-size:11.5px;font-weight:700;color:#111;line-height:1.3;font-family:'Poppins',sans-serif;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:30px}
+.pc{background:#fff;border-radius:14px;overflow:hidden;cursor:pointer;display:flex;flex-direction:column;box-shadow:0 2px 10px rgba(139,47,201,.08);border:1px solid rgba(214,18,126,.06);transition:.25s}
+.pc:hover{box-shadow:0 8px 24px rgba(139,47,201,.16);transform:translateY(-3px);border-color:rgba(214,18,126,.15)}
+.pc:active{box-shadow:0 1px 4px rgba(0,0,0,.1);transform:translateY(0)}
+.pc-img-wrap{position:relative;width:100%;aspect-ratio:1/1;background:linear-gradient(135deg,#fdf2f8,#f5f0fb);overflow:hidden;flex-shrink:0}
+.pc-img-wrap img{width:100%;height:100%;object-fit:cover;display:block;transition:.4s}
+.pc:hover .pc-img-wrap img{transform:scale(1.06)}
+.pc-badge{position:absolute;top:8px;left:8px;background:var(--brand-gradient);color:#fff;font-size:10px;font-weight:800;padding:3px 8px;border-radius:6px;z-index:2;letter-spacing:.3px;box-shadow:0 2px 6px rgba(139,47,201,.35)}
+#flash-grid .pc-badge{background:linear-gradient(135deg,#f97316,#fb923c)}
+.pc-body{padding:8px 9px 10px;display:flex;flex-direction:column;gap:3px;flex:1}
+.pc-name{font-size:11.5px;font-weight:700;color:#1a1a1a;line-height:1.3;font-family:'Poppins',sans-serif;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:30px}
 .pc-prices{display:flex;align-items:baseline;gap:5px;flex-wrap:nowrap;margin-top:1px}
-.pc-price{font-size:13px;font-weight:900;color:#a52c71;font-family:'Poppins',sans-serif;white-space:nowrap}
+.pc-price{font-size:13.5px;font-weight:900;background:var(--brand-gradient);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;font-family:'Poppins',sans-serif;white-space:nowrap}
 .pc-old{font-size:10px;color:#bbb;text-decoration:line-through;font-family:'Poppins',sans-serif;white-space:nowrap}
 .pc-sold-row{display:flex;align-items:center;gap:5px;margin-top:3px}
-.pc-bar-bg{flex:1;height:4px;background:#fde0d8;border-radius:2px;overflow:hidden}
-.pc-bar-fill{height:100%;background:linear-gradient(90deg,#a52c71,#e0609d);border-radius:2px}
+.pc-bar-bg{flex:1;height:4px;background:#f5e3ee;border-radius:2px;overflow:hidden}
+.pc-bar-fill{height:100%;background:var(--brand-gradient);border-radius:2px}
 #flash-grid .pc-bar-fill{background:linear-gradient(90deg,#f97316,#fb923c)}
 .pc-sold-txt{font-size:10px;color:#999;white-space:nowrap;font-weight:600}
 /* hide old .product-card styles */
@@ -837,14 +845,15 @@ body.dark-mode #pwreset-audit-log { background: #111 !important; border-color: #
 .card-action-btns{display:none!important}
 
 /* WISHLIST HEART BUTTON ON PRODUCT CARDS */
-.pc-wish-btn{position:absolute;top:7px;right:7px;background:rgba(255,255,255,.92);border:none;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;color:#ccc;cursor:pointer;z-index:3;box-shadow:0 1px 4px rgba(0,0,0,.12);transition:.2s}
-.pc-wish-btn:hover,.pc-wish-btn.active{color:#e53e3e;background:#fff}
+.pc-wish-btn{position:absolute;top:8px;right:8px;background:rgba(255,255,255,.94);backdrop-filter:blur(4px);border:none;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;color:#ccc;cursor:pointer;z-index:3;box-shadow:0 2px 6px rgba(139,47,201,.15);transition:.2s}
+.pc-wish-btn:hover{color:#D6127E;background:#fff;transform:scale(1.1)}
+.pc-wish-btn.active{color:#D6127E;background:#fff}
 
 /* BOTTOM NAV */
 .bottom-nav{background:var(--surface)!important;border-top:1px solid var(--border)!important;padding:0!important}
 .bnav-item{padding:8px 4px 6px!important;font-size:10px!important;font-weight:600!important;color:var(--gray-400)!important;gap:2px!important}
 .bnav-item i{font-size:20px!important}
-.bnav-item.active{color:#a52c71!important}
+.bnav-item.active{color:#D6127E!important}
 .bnav-badge{top:4px!important;right:calc(50% - 18px)!important;font-size:9px!important;padding:1px 4px!important}
 
 /* PAGE BACKGROUNDS */
@@ -915,7 +924,7 @@ body{padding-bottom:65px!important;background:var(--bg)!important}
     <button class="hamburger" onclick="toggleSidebar()"><i class="fas fa-bars"></i></button>
     <!-- Logo: show image if available, fallback to styled text -->
     <div style="flex:1;display:flex;align-items:center">
-      <span onclick="navigate('home')" style="font-family:'Poppins',sans-serif;font-weight:900;font-size:26px;color:#a52c71;cursor:pointer;letter-spacing:-0.5px;line-height:1">FIC STORE</span>
+      <span onclick="navigate('home')" style="font-family:'Poppins',sans-serif;font-weight:900;font-size:26px;background:var(--brand-gradient);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;cursor:pointer;letter-spacing:-0.5px;line-height:1">FIC STORE</span>
     </div>
     <div class="header-icons" style="display:flex;align-items:center;gap:4px">
       <button id="dark-mode-btn" onclick="toggleDarkMode()" title="Toggle dark/light mode">🌙</button>
@@ -1231,7 +1240,7 @@ body{padding-bottom:65px!important;background:var(--bg)!important}
     <h2>Preorders</h2>
   </div>
   <div style="padding:14px">
-    <div style="background:linear-gradient(120deg,#a52c71,#e0609d);border-radius:14px;padding:16px;color:#fff;margin-bottom:16px">
+    <div style="background:linear-gradient(120deg,#D6127E,#e0609d);border-radius:14px;padding:16px;color:#fff;margin-bottom:16px">
       <div style="font-weight:900;font-size:16px;margin-bottom:4px"><i class="fas fa-calendar-check"></i> Available for Preorder</div>
       <div style="font-size:13px;opacity:.92">Reserve upcoming items before they arrive. Pay in full or a deposit — you choose.</div>
     </div>
@@ -1480,7 +1489,7 @@ body{padding-bottom:65px!important;background:var(--bg)!important}
 <div id="page-login" class="page">
   <div class="auth-wrap">
     <div class="auth-card">
-      <div class="auth-logo"><span style="font-family:'Poppins',sans-serif;font-weight:900;font-size:28px;color:#a52c71;letter-spacing:-0.5px;cursor:pointer" onclick="navigate('home')">FIC STORE</span></div>
+      <div class="auth-logo"><span style="font-family:'Poppins',sans-serif;font-weight:900;font-size:28px;color:#D6127E;letter-spacing:-0.5px;cursor:pointer" onclick="navigate('home')">FIC STORE</span></div>
       <h2 class="auth-title">Welcome Back!</h2>
       <p class="auth-subtitle">Sign in to your Fic Store account</p>
       <button class="btn-google" onclick="loginWithGoogle()"><img src="https://www.google.com/favicon.ico" width="18" height="18"> Continue with Google</button>
@@ -1498,7 +1507,7 @@ body{padding-bottom:65px!important;background:var(--bg)!important}
 <div id="page-register" class="page">
   <div class="auth-wrap">
     <div class="auth-card">
-      <div class="auth-logo"><span style="font-family:'Poppins',sans-serif;font-weight:900;font-size:28px;color:#a52c71;letter-spacing:-0.5px;cursor:pointer" onclick="navigate('home')">FIC STORE</span></div>
+      <div class="auth-logo"><span style="font-family:'Poppins',sans-serif;font-weight:900;font-size:28px;color:#D6127E;letter-spacing:-0.5px;cursor:pointer" onclick="navigate('home')">FIC STORE</span></div>
       <h2 class="auth-title">Create Account</h2>
       <p class="auth-subtitle">Join Fic Store and start shopping</p>
       <div class="form-group"><label class="form-label">Full Name</label><input class="form-input" id="reg-name" type="text" placeholder="Your full name"></div>
@@ -1515,7 +1524,7 @@ body{padding-bottom:65px!important;background:var(--bg)!important}
 <div id="page-forgot" class="page">
   <div class="auth-wrap">
     <div class="auth-card">
-      <div class="auth-logo"><span style="font-family:'Poppins',sans-serif;font-weight:900;font-size:28px;color:#a52c71;letter-spacing:-0.5px;cursor:pointer" onclick="navigate('home')">FIC STORE</span></div>
+      <div class="auth-logo"><span style="font-family:'Poppins',sans-serif;font-weight:900;font-size:28px;color:#D6127E;letter-spacing:-0.5px;cursor:pointer" onclick="navigate('home')">FIC STORE</span></div>
       <h2 class="auth-title">Forgot Password?</h2>
       <p class="auth-subtitle">Enter your email and we'll send you a password reset link right away.</p>
       <div id="forgot-form-wrap">
@@ -1538,7 +1547,7 @@ body{padding-bottom:65px!important;background:var(--bg)!important}
 <div id="page-reset-password" class="page">
   <div class="auth-wrap">
     <div class="auth-card">
-      <div class="auth-logo"><span style="font-family:'Poppins',sans-serif;font-weight:900;font-size:28px;color:#a52c71;letter-spacing:-0.5px;cursor:pointer" onclick="navigate('home')">FIC STORE</span></div>
+      <div class="auth-logo"><span style="font-family:'Poppins',sans-serif;font-weight:900;font-size:28px;color:#D6127E;letter-spacing:-0.5px;cursor:pointer" onclick="navigate('home')">FIC STORE</span></div>
       <h2 class="auth-title">Create New Password</h2>
       <p class="auth-subtitle" id="reset-pw-subtitle">Enter your new password below.</p>
       <div id="reset-pw-form">
@@ -1863,7 +1872,7 @@ body{padding-bottom:65px!important;background:var(--bg)!important}
       <div class="admin-card">
         <div class="admin-card-title">📊 Sales Analytics</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">
-          <div id="analytics-total-revenue" style="background:linear-gradient(135deg,#a52c71,#e0609d);color:#fff;border-radius:10px;padding:14px;text-align:center">
+          <div id="analytics-total-revenue" style="background:linear-gradient(135deg,#D6127E,#e0609d);color:#fff;border-radius:10px;padding:14px;text-align:center">
             <div style="font-size:11px;font-weight:700;opacity:.85">TOTAL REVENUE</div>
             <div id="a-revenue" style="font-size:20px;font-weight:900;margin-top:4px">₦0</div>
           </div>
@@ -5508,7 +5517,7 @@ window.placeOrder = async function() {
     const couponDiscount = window._checkoutCouponDiscount || 0;
     const loyaltyDiscount = useLoyaltyDiscount || 0;
     const grandTotal = Math.max(0, subtotal - couponDiscount - loyaltyDiscount + deliveryFee);
-    const orderId = 'MAW-'+Date.now();
+    const orderId = 'FIC-'+Date.now();
     const itemsCopy = [...cart];
     const orderData = {
       orderId, userId: currentUser.uid, userEmail: currentUser.email,
@@ -5623,7 +5632,7 @@ async function placeOrderAfterPaystack(paystackRef) {
     const couponDiscount = window._checkoutCouponDiscount || 0;
     const loyaltyDiscount = useLoyaltyDiscount || 0;
     const grandTotal = Math.max(0, subtotal - couponDiscount - loyaltyDiscount + deliveryFee);
-    const orderId = 'MAW-'+Date.now();
+    const orderId = 'FIC-'+Date.now();
     const itemsCopy = [...cart];
     const orderData = {
       orderId, userId: currentUser.uid, userEmail: currentUser.email,
@@ -5725,7 +5734,7 @@ window.loadOrders = async function() {
             <button class="track-order-btn" onclick="showTrackingModal('${o.orderId||d.id}')"><i class="fas fa-truck"></i> Track</button>
             <button style="background:var(--gray-100);border:none;border-radius:6px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;color:var(--gray-700)" onclick="reorderItems('${d.id}')"><i class="fas fa-redo"></i> Reorder</button>
             ${canCancel ? '<button style="background:none;border:2px solid var(--red);color:var(--red);border-radius:6px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer" onclick="cancelOrder(\''+d.id+'\',\''+o.orderId+'\')"><i class="fas fa-times"></i> Cancel</button>' : ''}
-            ${canReturn ? '<button style="background:none;border:2px solid #c94f8c;color:#c94f8c;border-radius:6px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer" onclick="requestReturn(\''+d.id+'\',\''+o.orderId+'\')"><i class="fas fa-undo"></i> Return</button>' : ''}
+            ${canReturn ? '<button style="background:none;border:2px solid #FF5FA8;color:#FF5FA8;border-radius:6px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer" onclick="requestReturn(\''+d.id+'\',\''+o.orderId+'\')"><i class="fas fa-undo"></i> Return</button>' : ''}
           </div>
         </div>
       </div>`;
@@ -6647,12 +6656,12 @@ function computePreorderReports() {
   const revenue = _allPreorderOrders.reduce((s,o)=>s+(o.amountPaid||0),0);
 
   const cards = [
-    ['Total Preorder Products', totalProducts, '#a52c71'],
+    ['Total Preorder Products', totalProducts, '#D6127E'],
     ['Active Preorders', active, '#f97316'],
     ['Pending Payments', pendingPayments, '#f59e0b'],
     ['Completed', completed, '#16a34a'],
     ['Cancelled', cancelled, '#ef4444'],
-    ['Revenue', '₦'+revenue.toLocaleString(), '#a52c71'],
+    ['Revenue', '₦'+revenue.toLocaleString(), '#D6127E'],
   ];
   statsEl.innerHTML = cards.map(([label,val,color])=>`<div class="admin-card" style="text-align:center;padding:14px;border-top:3px solid ${color}">
     <div style="font-size:20px;font-weight:900;color:${color}">${val}</div>
@@ -6706,7 +6715,7 @@ window.exportPreorderPDF = function() {
   </tr>`).join('');
   const win = window.open('', '_blank');
   win.document.write(`<html><head><title>Fic Store Preorder Report</title>
-    <style>body{font-family:Arial,sans-serif;padding:24px}h1{color:#a52c71}table{width:100%;border-collapse:collapse;margin-top:16px}th,td{border:1px solid #ddd;padding:8px;text-align:left;font-size:12px}th{background:#a52c71;color:#fff}</style>
+    <style>body{font-family:Arial,sans-serif;padding:24px}h1{color:#D6127E}table{width:100%;border-collapse:collapse;margin-top:16px}th,td{border:1px solid #ddd;padding:8px;text-align:left;font-size:12px}th{background:#D6127E;color:#fff}</style>
     </head><body><h1>Fic Store Global Ventures — Preorder Report</h1><p>Generated: ${new Date().toLocaleString('en-NG')}</p>
     <table><thead><tr><th>Order ID</th><th>Customer</th><th>Product</th><th>Qty</th><th>Total</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>
     </body></html>`);
