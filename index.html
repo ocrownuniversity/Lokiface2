@@ -847,8 +847,9 @@ body.dark-mode #pwreset-audit-log { background: #111 !important; border-color: #
 .flash-colon{color:#f97316!important;font-weight:900!important}
 .flash-bolt{color:#f97316!important}
 
-/* PRODUCT GRID — 3 columns */
+/* PRODUCT GRID — 3 columns on mobile, widens on larger screens */
 .product-grid{display:grid!important;grid-template-columns:repeat(3,1fr)!important;gap:8px!important;padding:0 2px!important}
+@media(min-width:640px){.product-grid{grid-template-columns:repeat(4,1fr)!important;gap:16px!important;padding:0!important}}
 
 /* PRODUCT CARD — pixel-perfect match to screenshot */
 .pc{background:#fff;border-radius:14px;overflow:hidden;cursor:pointer;display:flex;flex-direction:column;box-shadow:0 2px 10px rgba(139,47,201,.08);border:1px solid rgba(214,18,126,.06);transition:.25s}
@@ -864,16 +865,26 @@ body.dark-mode #pwreset-audit-log { background: #111 !important; border-color: #
 .pc-prices{display:flex;align-items:baseline;gap:5px;flex-wrap:nowrap;margin-top:1px}
 .pc-price{font-size:13.5px;font-weight:900;background:var(--brand-gradient);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;font-family:'Poppins',sans-serif;white-space:nowrap}
 .pc-old{font-size:10px;color:#bbb;text-decoration:line-through;font-family:'Poppins',sans-serif;white-space:nowrap}
-.pc-sold-row{display:flex;align-items:center;gap:5px;margin-top:3px}
+.pc-sold-row{display:none}
 .pc-bar-bg{flex:1;height:4px;background:#f5e3ee;border-radius:2px;overflow:hidden}
 .pc-bar-fill{height:100%;background:var(--brand-gradient);border-radius:2px}
 #flash-grid .pc-bar-fill{background:linear-gradient(90deg,#f97316,#fb923c)}
 .pc-sold-txt{font-size:10px;color:#999;white-space:nowrap;font-weight:600}
+/* RATING ROW — star rating + sold count, matches reference design */
+.pc-rating-row{display:flex;align-items:center;justify-content:space-between;gap:6px;margin-top:2px}
+.pc-rating{display:flex;align-items:center;gap:4px;font-size:11px;font-weight:800;color:var(--gray-700)}
+.pc-rating i{color:#f59e0b;font-size:10px}
+.pc-rating-sold{font-size:10.5px;color:#999;font-weight:600;white-space:nowrap}
+body.dark-mode .pc-rating{color:#e0e0e0!important}
+/* ADD TO CART BUTTON ON CARD */
+.pc-atc-btn{margin-top:6px;width:100%;background:var(--brand-gradient);color:#fff;border:none;border-radius:8px;padding:8px 6px;font-size:11.5px;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;transition:.2s;font-family:'Poppins',sans-serif}
+.pc-atc-btn:hover{opacity:.92;transform:translateY(-1px)}
+.pc-atc-btn:active{transform:translateY(0)}
+.pc-atc-btn i{font-size:11px}
+#flash-grid .pc-atc-btn{background:linear-gradient(90deg,#f97316,#fb923c)}
 /* hide old .product-card styles */
 .product-card{display:none!important}
 .product-img-wrap,.product-info,.product-name,.product-price,.product-badge,.product-wishlist-btn,.product-price-row{all:unset!important}
-/* hide action buttons — not in screenshot design */
-.card-action-btns{display:none!important}
 
 /* WISHLIST HEART BUTTON ON PRODUCT CARDS */
 .pc-wish-btn{position:absolute;top:8px;right:8px;background:rgba(255,255,255,.94);backdrop-filter:blur(4px);border:none;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;color:#ccc;cursor:pointer;z-index:3;box-shadow:0 2px 6px rgba(139,47,201,.15);transition:.2s}
@@ -4977,8 +4988,7 @@ function productCardHTML(p, isFlash=false) {
   const { price, displayPrice, hasDisc, discPct } = getEffectivePrice(p);
   const img = (p.images&&p.images[0]) ? p.images[0] : 'https://placehold.co/300x300/f0f0f0/aaaaaa?text=No+Image';
   const soldCount = p.soldCount || Math.floor(Math.random()*150+20);
-  const stock = p.stock||50;
-  const soldPct = Math.min(95, Math.round(soldCount/(soldCount+stock)*100));
+  const rating = p.rating || 4.5;
   const isWished = wishlist.includes(p.id);
   return `<div class="pc" data-product-id="${p.id}">
     <div class="pc-img-wrap" onclick="openProduct('${p.id}')">
@@ -4986,19 +4996,41 @@ function productCardHTML(p, isFlash=false) {
       ${hasDisc ? `<span class="pc-badge">-${discPct}%</span>` : ''}
       <button class="pc-wish-btn${isWished?' active':''}" onclick="event.stopPropagation();toggleWishlist('${p.id}')" title="${isWished?'Remove from wishlist':'Add to wishlist'}"><i class="fas fa-heart"></i></button>
     </div>
-    <div class="pc-body" onclick="openProduct('${p.id}')">
-      <div class="pc-name">${p.name||'Product'}</div>
-      <div class="pc-prices">
-        <span class="pc-price">₦${displayPrice.toLocaleString()}</span>
-        ${hasDisc ? `<span class="pc-old">₦${price.toLocaleString()}</span>` : ''}
+    <div class="pc-body">
+      <div onclick="openProduct('${p.id}')">
+        <div class="pc-name">${p.name||'Product'}</div>
+        <div class="pc-prices">
+          <span class="pc-price">₦${displayPrice.toLocaleString()}</span>
+          ${hasDisc ? `<span class="pc-old">₦${price.toLocaleString()}</span>` : ''}
+        </div>
+        <div class="pc-rating-row">
+          <span class="pc-rating"><i class="fas fa-star"></i>${rating.toFixed(1)}</span>
+          <span class="pc-rating-sold">${soldCount} sold</span>
+        </div>
       </div>
-      <div class="pc-sold-row">
-        <div class="pc-bar-bg"><div class="pc-bar-fill" style="width:${soldPct}%"></div></div>
-        <span class="pc-sold-txt">${soldCount} sold</span>
-      </div>
+      <button class="pc-atc-btn" onclick="event.stopPropagation();quickAddToCart('${p.id}')"><i class="fas fa-cart-shopping"></i> Add to Cart</button>
     </div>
   </div>`;
 }
+
+// Quick add-to-cart straight from a product card. Falls back to opening the
+// product page when a size/colour must be chosen first.
+window.quickAddToCart = function(id) {
+  if(!currentUser) { showToast('Please sign in to add to cart','info'); navigate('login'); return; }
+  const p = allProducts.find(x=>x.id===id);
+  if(!p) return;
+  if((p.sizes||[]).length || (p.colours||[]).length) { openProduct(id); return; }
+  const price = getEffectivePrice(p).displayPrice;
+  const existing = cart.find(x=>x.variantKey===p.id);
+  if(existing) {
+    existing.qty = Math.min(existing.qty+1, p.stock||99);
+  } else {
+    cart.push({ productId: p.id, variantKey: p.id, name: p.name, price, image: (p.images&&p.images[0])||'', qty: 1, size:'', colour:'', variantLabel:'' });
+  }
+  saveCart();
+  updateCartBadge();
+  showToast(`${p.name} added to cart!`);
+};
 
 function starsHTML(rating) {
   const r = Math.round(rating);
