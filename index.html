@@ -2967,10 +2967,17 @@ body{padding-bottom:65px!important;background:var(--bg)!important}
         </select>
       </div>
       <div>
-        <label class="form-label">Product Image URL <span style="color:var(--gray-400);font-weight:400">(optional — paste a direct image link)</span></label>
-        <input class="form-input" id="banner-image" placeholder="https://example.com/image.jpg">
-        <div id="banner-img-preview" style="margin-top:8px;display:none"><img id="banner-img-preview-img" style="width:100%;max-height:120px;object-fit:cover;border-radius:8px;border:1px solid var(--gray-200)"></div>
-        <p style="font-size:11px;color:var(--gray-400);margin-top:6px"><i class="fas fa-info-circle"></i> Tip: upload your image to <strong>imgbb.com</strong> or <strong>imgur.com</strong> for free, then paste the direct link here.</p>
+        <label class="form-label">Banner Image <span style="color:var(--gray-400);font-weight:400;font-size:12px">(upload directly from your device)</span></label>
+        <input type="file" id="banner-image-file" accept="image/*" style="display:none" onchange="handleBannerImageSelect(this.files)">
+        <div onclick="document.getElementById('banner-image-file').click()" style="border:2px dashed var(--orange);border-radius:10px;padding:18px;text-align:center;cursor:pointer;background:rgba(165,44,113,.05);transition:.2s" onmouseover="this.style.background='rgba(165,44,113,.1)'" onmouseout="this.style.background='rgba(165,44,113,.05)'">
+          <i class="fas fa-cloud-upload-alt" style="font-size:24px;color:var(--orange);margin-bottom:6px;display:block"></i>
+          <span style="font-size:13px;font-weight:700;color:var(--gray-700)">Tap to select banner image</span>
+          <div style="font-size:11px;color:var(--gray-400);margin-top:2px">JPG or PNG · appears instantly, no waiting</div>
+        </div>
+        <div id="banner-img-preview" style="margin-top:8px;display:none;position:relative">
+          <img id="banner-img-preview-img" style="width:100%;max-height:120px;object-fit:cover;border-radius:8px;border:1px solid var(--gray-200)">
+          <button type="button" onclick="removeBannerImage()" style="position:absolute;top:6px;right:6px;width:24px;height:24px;border-radius:50%;background:rgba(0,0,0,.6);color:#fff;border:none;font-size:12px;cursor:pointer;line-height:1;display:flex;align-items:center;justify-content:center"><i class="fas fa-times"></i></button>
+        </div>
       </div>
       <div>
         <label class="form-label">Display Order (Slide Position)</label>
@@ -6837,6 +6844,37 @@ function compressImageFile(file, maxDim = 900, quality = 0.7) {
   });
 }
 
+let _bannerImageUrl = '';
+
+window.handleBannerImageSelect = async function(fileList) {
+  const file = fileList && fileList[0];
+  if (!file || !file.type.startsWith('image/')) return;
+  try {
+    const dataUrl = await compressImageFile(file, 1200, 0.75);
+    _bannerImageUrl = dataUrl;
+    renderBannerImagePreview();
+  } catch (e) {
+    showToast('Could not read that image — try another', 'error');
+  }
+  document.getElementById('banner-image-file').value = '';
+};
+
+window.removeBannerImage = function() {
+  _bannerImageUrl = '';
+  renderBannerImagePreview();
+};
+
+function renderBannerImagePreview() {
+  const prev = document.getElementById('banner-img-preview');
+  if (!prev) return;
+  if (_bannerImageUrl) {
+    document.getElementById('banner-img-preview-img').src = _bannerImageUrl;
+    prev.style.display = 'block';
+  } else {
+    prev.style.display = 'none';
+  }
+}
+
 window.handleProductImageSelect = async function(fileList) {
   const files = Array.from(fileList || []);
   if (!files.length) return;
@@ -7991,10 +8029,9 @@ window.editBannerSlot = async function(slotId) {
   document.getElementById('banner-btn-text').value = b.btnText||'Shop Now';
   document.getElementById('banner-btn-action').value = b.btnAction||'all';
   document.getElementById('banner-bg').value = b.bg||'slide-1';
-  document.getElementById('banner-image').value = b.image||'';
+  _bannerImageUrl = b.image||'';
+  renderBannerImagePreview();
   document.getElementById('banner-order').value = String(b.order||1);
-  const prev = document.getElementById('banner-img-preview');
-  if(b.image){document.getElementById('banner-img-preview-img').src=b.image;prev.style.display='block';}else{prev.style.display='none';}
   document.getElementById('banner-modal-title').textContent = `Edit Slide ${b.order}`;
   openModal('modal-banner');
 };
@@ -8009,7 +8046,7 @@ window.saveBanner = async function() {
     btnText: document.getElementById('banner-btn-text').value.trim()||'Shop Now',
     btnAction: document.getElementById('banner-btn-action').value,
     bg: document.getElementById('banner-bg').value,
-    image: document.getElementById('banner-image').value.trim(),
+    image: _bannerImageUrl,
     order: Number(document.getElementById('banner-order').value)||1,
     updatedAt: serverTimestamp()
   };
