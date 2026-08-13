@@ -1379,7 +1379,7 @@ async function removePostReaction(postId, uid) {
 /* ============================== POST SHARING ============================== */
 async function shareToTimeline(originalPost, meId, comment) {
     await db.collection('posts').add({
-        authorId: meId, text: (comment || '').trim(), images: [], bold: false, bgStyle: null, taggedUsers: [],
+        authorId: meId, text: (comment || '').trim(), images: [], bold: false, bgStyle: null, taggedUsers: [], hashtags: extractHashtags(comment),
         sharedPostId: originalPost.id, sharedFrom: originalPost.authorId,
         createdAt: FieldValue.serverTimestamp(), likesCount: 0, commentsCount: 0, sharesCount: 0
     });
@@ -1902,7 +1902,7 @@ async function shareReel(reel, uid, opts) {
     // distinct from reel.pageId/reel.authorId which describe who originally made the reel.
     const { text = '', sharePageId = null } = opts || {};
     await db.collection('posts').add({
-        authorId: uid, pageId: sharePageId || null, text: text || '', images: [], sharedReel: { id: reel.id, thumbURL: reel.thumbURL, caption: reel.caption, authorId: reel.authorId, authorType: reel.authorType, pageId: reel.pageId || null },
+        authorId: uid, pageId: sharePageId || null, text: text || '', images: [], hashtags: extractHashtags(text), sharedReel: { id: reel.id, thumbURL: reel.thumbURL, caption: reel.caption, authorId: reel.authorId, authorType: reel.authorType, pageId: reel.pageId || null },
         likesCount: 0, commentsCount: 0, sharesCount: 0, createdAt: FieldValue.serverTimestamp(),
     });
     db.collection('reels').doc(reel.id).update({ sharesCount: FieldValue.increment(1) }).catch(() => { });
@@ -5341,7 +5341,7 @@ function CreatePostScreen({ go, route }) {
             const postRef = await db.collection('posts').add({
                 authorId: profile.id, pageId: postingAs.type === 'page' ? postingAs.page.id : null,
                 timelineOwnerId: timelineOwnerId || null,
-                text: text.trim(), images: imageUrls, videoURL,
+                text: text.trim(), images: imageUrls, videoURL, hashtags: extractHashtags(text),
                 bold, bgStyle: (imageUrls.length || videoURL) ? null : bgStyle, taggedUsers: tagged, audience,
                 music: music || null, feeling: feeling || null, location: location || null,
                 createdAt: FieldValue.serverTimestamp(), likesCount: 0, commentsCount: 0, sharesCount: 0
@@ -5977,7 +5977,7 @@ function PostCard({ post, go, groupCtx, autoOpenComments, sponsored, repeated })
         }
     };
     const saveEdit = async () => {
-        await db.collection('posts').doc(post.id).update({ text: editText.trim(), edited: true });
+        await db.collection('posts').doc(post.id).update({ text: editText.trim(), hashtags: extractHashtags(editText), edited: true });
         setEditing(false);
     };
     if (!author)
@@ -6778,6 +6778,9 @@ function SearchScreen({ go, route }) {
     const [allUsers, setAllUsers] = useState(null);
     const [allGroups, setAllGroups] = useState(null);
     const [allPages, setAllPages] = useState(null);
+    const [allPosts, setAllPosts] = useState(null);
+    const [allReels, setAllReels] = useState(null);
+    const [allListings, setAllListings] = useState(null);
     const [messaging, setMessaging] = useState(null);
     const [ptab, setPtab] = useState((route === null || route === void 0 ? void 0 : route.tab) || 'suggested');
     const friendships = useFriendships(profile.id);
@@ -6800,6 +6803,26 @@ function SearchScreen({ go, route }) {
             .onSnapshot(snap => setAllPages(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))), () => setAllPages([]));
         return unsub;
     }, []);
+    // Recent public posts, used for #hashtag and plain-word search below — e.g. typing
+    // "#nigeria" or just "nigeria" surfaces every post whose caption or hashtags mention it.
+    useEffect(() => {
+        const unsub = db.collection('posts').orderBy('createdAt', 'desc').limit(400)
+            .onSnapshot(snap => setAllPosts(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))), () => setAllPosts([]));
+        return unsub;
+    }, []);
+    // Same "everything with that word on it" search also covers Reels (caption + hashtags)
+    // and Marketplace listings (title + description) so #nigeria or "nigeria" surfaces the
+    // full picture, not just feed posts.
+    useEffect(() => {
+        const unsub = db.collection('reels').orderBy('createdAt', 'desc').limit(300)
+            .onSnapshot(snap => setAllReels(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))), () => setAllReels([]));
+        return unsub;
+    }, []);
+    useEffect(() => {
+        const unsub = db.collection('listings').where('status', '==', 'active').limit(300)
+            .onSnapshot(snap => setAllListings(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))), () => setAllListings([]));
+        return unsub;
+    }, []);
     // Client-side substring match (case-insensitive, matches anywhere in the name — not just the
     // start) across all three directories at once, so one search box covers people, Pages, and
     // Groups instead of only ever finding people by username prefix.
@@ -6818,7 +6841,48 @@ function SearchScreen({ go, route }) {
         const lower = q.trim().toLowerCase();
         return allGroups.filter(g => (g.name || g.displayName || '').toLowerCase().includes(lower)).slice(0, 20);
     }, [q, allGroups]);
-    useEffect(() => { setBusy(!!q.trim() && (allUsers === null || allPages === null || allGroups === null)); }, [q, allUsers, allPages, allGroups]);
+    // "#nigeria" or "nigeria" — either way, find every public post whose caption mentions it
+    // (matched against the post's extracted hashtags first, then falls back to plain text search
+    // so a word doesn't have to have been typed as a hashtag by the original poster).
+    const postResults = useMemo(() => {
+        const raw = q.trim();
+        if (!raw || !allPosts) return [];
+        const term = raw.replace(/^#+/, '').trim().toLowerCase();
+        if (!term) return [];
+        return allPosts.filter(p => {
+            if (p.hiddenByAdmin) return false;
+            if (p.audience && p.audience !== 'public') return false;
+            const tags = (p.hashtags || []).map(h => h.toLowerCase());
+            const text = (p.text || '').toLowerCase();
+            return tags.some(h => h.includes(term)) || text.includes(term);
+        }).slice(0, 30);
+    }, [q, allPosts]);
+    const reelResults = useMemo(() => {
+        const raw = q.trim();
+        if (!raw || !allReels) return [];
+        const term = raw.replace(/^#+/, '').trim().toLowerCase();
+        if (!term) return [];
+        return allReels.filter(r => {
+            if (r.hiddenByAdmin) return false;
+            const tags = (r.hashtags || []).map(h => h.toLowerCase());
+            const caption = (r.caption || '').toLowerCase();
+            return tags.some(h => h.includes(term)) || caption.includes(term);
+        }).slice(0, 30);
+    }, [q, allReels]);
+    const listingResults = useMemo(() => {
+        const raw = q.trim();
+        if (!raw || !allListings) return [];
+        const term = raw.replace(/^#+/, '').trim().toLowerCase();
+        if (!term) return [];
+        return allListings.filter(l => {
+            if (l.hiddenByAdmin) return false;
+            const title = (l.title || '').toLowerCase();
+            const desc = (l.description || '').toLowerCase();
+            const category = (l.category || '').toLowerCase();
+            return title.includes(term) || desc.includes(term) || category.includes(term);
+        }).slice(0, 30);
+    }, [q, allListings]);
+    useEffect(() => { setBusy(!!q.trim() && (allUsers === null || allPages === null || allGroups === null || allPosts === null || allReels === null || allListings === null)); }, [q, allUsers, allPages, allGroups, allPosts, allReels, allListings]);
     const byId = new Map((allUsers || []).map(u => [u.id, u]));
     const suggestions = (allUsers || [])
         .filter(u => u.id !== profile.id && !u.suspended)
@@ -6866,10 +6930,10 @@ function SearchScreen({ go, route }) {
     return (React.createElement("div", null,
         React.createElement("div", { className: "relative mb-4" },
             React.createElement("i", { className: "fa-solid fa-magnifying-glass absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" }),
-            React.createElement("input", { value: q, onChange: e => setQ(e.target.value), placeholder: "Search people, Pages, and groups\u2026", className: "w-full pl-11 pr-4 py-3 rounded-xl bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 text-sm" })),
+            React.createElement("input", { value: q, onChange: e => setQ(e.target.value), placeholder: "Search people, Pages, groups, posts, reels, or #hashtags\u2026", className: "w-full pl-11 pr-4 py-3 rounded-xl bg-white dark:bg-ink-800 border border-slate-100 dark:border-ink-700 text-sm" })),
         busy && React.createElement("p", { className: "text-sm text-slate-400" }, "Searching\u2026"),
         q.trim() ? (React.createElement("div", { className: "space-y-5" },
-            !busy && userResults.length === 0 && pageResults.length === 0 && groupResults.length === 0 && React.createElement("p", { className: "text-sm text-slate-400 text-center py-10" }, "Nothing found for \u201c", q.trim(), "\u201d."),
+            !busy && userResults.length === 0 && pageResults.length === 0 && groupResults.length === 0 && postResults.length === 0 && reelResults.length === 0 && listingResults.length === 0 && React.createElement("p", { className: "text-sm text-slate-400 text-center py-10" }, "Nothing found for \u201c", q.trim(), "\u201d."),
             userResults.length > 0 && React.createElement("div", null,
                 React.createElement("p", { className: "text-xs font-bold uppercase tracking-wide text-slate-400 mb-2" }, "People"),
                 React.createElement("div", { className: "space-y-2" }, userResults.map(u => React.createElement(PersonRow, { key: u.id, u: u })))),
@@ -6878,7 +6942,16 @@ function SearchScreen({ go, route }) {
                 React.createElement("div", { className: "space-y-2" }, pageResults.map(p => React.createElement(PageCard, { key: p.id, page: p, go: go })))),
             groupResults.length > 0 && React.createElement("div", null,
                 React.createElement("p", { className: "text-xs font-bold uppercase tracking-wide text-slate-400 mb-2" }, "Groups"),
-                React.createElement("div", { className: "space-y-2" }, groupResults.map(g => React.createElement(GroupCard, { key: g.id, group: g, go: go })))))) : (React.createElement("div", null,
+                React.createElement("div", { className: "space-y-2" }, groupResults.map(g => React.createElement(GroupCard, { key: g.id, group: g, go: go })))),
+            reelResults.length > 0 && React.createElement("div", null,
+                React.createElement("p", { className: "text-xs font-bold uppercase tracking-wide text-slate-400 mb-2" }, q.trim().startsWith('#') ? "Reels tagged " + q.trim() : "Reels mentioning \u201c" + q.trim() + "\u201d"),
+                React.createElement("div", { className: "grid grid-cols-3 gap-1" }, reelResults.map(r => React.createElement(ReelTile, { key: r.id, reel: r, onOpen: () => go({ name: 'reels', reelId: r.id }) })))),
+            listingResults.length > 0 && React.createElement("div", null,
+                React.createElement("p", { className: "text-xs font-bold uppercase tracking-wide text-slate-400 mb-2" }, q.trim().startsWith('#') ? "Marketplace tagged " + q.trim() : "Marketplace mentioning \u201c" + q.trim() + "\u201d"),
+                React.createElement("div", { className: "space-y-3" }, listingResults.map(l => React.createElement(ListingFeedCard, { key: l.id, listing: l, go: go })))),
+            postResults.length > 0 && React.createElement("div", null,
+                React.createElement("p", { className: "text-xs font-bold uppercase tracking-wide text-slate-400 mb-2" }, q.trim().startsWith('#') ? "Posts tagged " + q.trim() : "Posts mentioning \u201c" + q.trim() + "\u201d"),
+                React.createElement("div", { className: "space-y-3" }, postResults.map(p => React.createElement(PostCard, { key: p.id, post: p, go: go })))))) : (React.createElement("div", null,
             React.createElement("div", { className: "flex gap-2 mb-4" }, TABS.map(([k, l]) => (React.createElement("button", { key: k, onClick: () => setPtab(k), className: "flex-1 py-2 rounded-full text-xs font-semibold border " + (ptab === k ? "bg-brand-600 text-white border-brand-600" : "border-slate-200 dark:border-ink-700 text-slate-500") }, l)))),
             ptab === 'suggested' && (React.createElement("div", null,
                 allUsers === null && React.createElement("p", { className: "text-sm text-slate-400" }, "Loading\u2026"),
@@ -9664,7 +9737,7 @@ function AdminPostAsYelofaceForm({ adminUid, adminEmail }) {
             }
             await db.collection('posts').add({
                 authorId: adminUid, pageId: YELOFACE_OFFICIAL_PAGE_ID,
-                text: text.trim(), images: imageUrl ? [imageUrl] : [],
+                text: text.trim(), images: imageUrl ? [imageUrl] : [], hashtags: extractHashtags(text),
                 bold: false, bgStyle: null, taggedUsers: [], audience: 'public',
                 createdAt: FieldValue.serverTimestamp(), likesCount: 0, commentsCount: 0, sharesCount: 0
             });
