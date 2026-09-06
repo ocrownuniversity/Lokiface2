@@ -675,6 +675,13 @@ function audioExtFromMime(mime) {
 // (and keeps making sound) even once you've scrolled past it in the feed, since nothing tells
 // it to stop. Only calls the standard .pause(), so unlike an audio-processing wrapper this
 // can't ever leave the video silent — worst case it just doesn't auto-pause.
+//
+// Also fixes feed videos showing as a small black box before anyone taps play: with no
+// "preload" hint the browser (especially on slow/metered connections) may not fetch even
+// the video's dimensions, so it renders at a tiny fallback size with nothing drawn. Setting
+// preload="metadata" (unless the caller overrides it) makes the browser fetch just enough to
+// know the real size right away, and once a frame is available it's grabbed onto a canvas
+// and used as the poster, so a real preview image shows instead of plain black.
 function AutoPauseVideo(props) {
     const ref = useRef(null);
     useEffect(() => {
@@ -686,7 +693,18 @@ function AutoPauseVideo(props) {
         io.observe(el);
         return () => io.disconnect();
     }, []);
-    return React.createElement("video", Object.assign({ ref }, props));
+    const captureFrame = (e) => {
+        const el = e.currentTarget;
+        if (el.poster || !el.videoWidth || !el.videoHeight) return;
+        try {
+            const canvas = document.createElement('canvas');
+            canvas.width = el.videoWidth;
+            canvas.height = el.videoHeight;
+            canvas.getContext('2d').drawImage(el, 0, 0, canvas.width, canvas.height);
+            el.poster = canvas.toDataURL('image/jpeg', 0.7);
+        } catch (err) { /* cross-origin video data — leave it without a captured poster */ }
+    };
+    return React.createElement("video", Object.assign({ ref, preload: "metadata", onLoadedData: captureFrame }, props));
 }
 // "See more" now triggers off the actual rendered line count (3 lines, like Facebook),
 // instead of a fixed character count — a character limit either cuts short lines off way too
@@ -4622,6 +4640,7 @@ function GoLiveScreen({ go }) {
     const liveDoc = useLiveDoc(host.active ? host.liveId : null);
     const comments = useLiveComments(host.active ? host.liveId : null);
     const [commentText, setCommentText] = useState('');
+    const [shareOpen, setShareOpen] = useState(false);
     useEffect(() => {
         if (host.active) return; // already broadcasting — no separate preview stream needed
         let stream, cancelled = false;
@@ -4689,12 +4708,109 @@ function GoLiveScreen({ go }) {
                 React.createElement("span", { className: "bg-black/50 text-white text-xs font-semibold px-2.5 py-1 rounded-full" }, React.createElement("i", { className: "fa-solid fa-eye mr-1" }), (liveDoc && liveDoc.viewerCount) || 0)),
             React.createElement("button", { onClick: end, className: "bg-white text-red-600 text-xs font-bold px-3 py-1.5 rounded-full" }, "End Live")),
         React.createElement("div", { className: "relative z-10 mt-auto px-3 pb-4" },
-            React.createElement("div", { className: "max-h-40 overflow-y-auto flex flex-col gap-1 mb-2" },
-                comments.slice(-30).map(c => React.createElement("p", { key: c.id, className: "text-white text-xs bg-black/30 rounded-full px-3 py-1.5 w-fit max-w-[85%]" },
-                    React.createElement("span", { className: "font-bold" }, c.name), " ", c.text))),
-            React.createElement("div", { className: "flex items-center gap-2" },
-                React.createElement("input", { value: commentText, onChange: e => setCommentText(e.target.value), onKeyDown: e => e.key === 'Enter' && sendComment(), placeholder: "Comment\u2026", className: "flex-1 px-4 py-2.5 rounded-full bg-white/15 text-white placeholder-white/50 text-sm focus:outline-none" }),
-                React.createElement("button", { onClick: sendComment, className: "w-10 h-10 rounded-full bg-white/15 flex items-center justify-center text-white" }, React.createElement("i", { className: "fa-solid fa-paper-plane text-sm" })))));
+            React.createElement("div", { className: "flex items-end justify-between gap-2" },
+                React.createElement("div", { className: "flex-1 min-w-0" },
+                    React.createElement("div", { className: "max-h-40 overflow-y-auto flex flex-col gap-1 mb-2" },
+                        comments.slice(-30).map(c => React.createElement("p", { key: c.id, className: "text-white text-xs bg-black/30 rounded-full px-3 py-1.5 w-fit max-w-[95%]" },
+                            React.createElement("span", { className: "font-bold" }, c.name), " ", c.text))),
+                    React.createElement("div", { className: "flex items-center gap-2" },
+                        React.createElement("input", { value: commentText, onChange: e => setCommentText(e.target.value), onKeyDown: e => e.key === 'Enter' && sendComment(), placeholder: "Comment\u2026", className: "flex-1 px-4 py-2.5 rounded-full bg-white/15 text-white placeholder-white/50 text-sm focus:outline-none" }),
+                        React.createElement("button", { onClick: sendComment, className: "w-10 h-10 rounded-full bg-white/15 flex items-center justify-center text-white shrink-0" }, React.createElement("i", { className: "fa-solid fa-paper-plane text-sm" })))),
+                React.createElement("div", { className: "flex flex-col items-center gap-3 shrink-0 mb-1" },
+                    React.createElement("div", { className: "flex flex-col items-center gap-0.5" },
+                        React.createElement("span", { className: "w-11 h-11 rounded-full bg-white/15 flex items-center justify-center" },
+                            React.createElement("i", { className: "fa-solid fa-heart text-lg text-red-500" })),
+                        React.createElement("span", { className: "text-white text-[11px] font-semibold" }, (liveDoc && liveDoc.likesCount) || 0)),
+                    React.createElement("button", { onClick: () => setShareOpen(true), className: "flex flex-col items-center gap-0.5" },
+                        React.createElement("span", { className: "w-11 h-11 rounded-full bg-white/15 flex items-center justify-center" },
+                            React.createElement("i", { className: "fa-solid fa-share text-lg text-white" })),
+                        React.createElement("span", { className: "text-white text-[11px] font-semibold" }, (liveDoc && liveDoc.sharesCount) || 0))))),
+        shareOpen && liveDoc && React.createElement(LiveShareSheet, { live: liveDoc, onClose: () => setShareOpen(false) }));
+}
+// Lightweight share sheet for a live stream — WhatsApp, copy link, "send to a friend" in-app,
+// or hand off to the device's native share sheet. Kept deliberately simpler than
+// ReelShareSheet/ShareSheet (no "share to timeline" step) since a live is ephemeral and the
+// point is inviting people to come watch it right now, not posting about it later.
+function LiveShareSheet({ live, onClose }) {
+    const { profile } = useAuth();
+    const toast = useToast();
+    const [step, setStep] = useState('menu'); // 'menu' | 'message'
+    const [busy, setBusy] = useState(false);
+    const [friends, setFriends] = useState(null);
+    const [fq, setFq] = useState('');
+    useEffect(() => {
+        if (step !== 'message') return;
+        (async () => {
+            const snap = await db.collection('friendships').where('users', 'array-contains', profile.id).where('status', '==', 'accepted').get().catch(() => null);
+            if (!snap) { setFriends([]); return; }
+            const otherIds = snap.docs.map(d => otherUidOfFriendship(d.data(), profile.id));
+            const users = await Promise.all(otherIds.map(uid => db.collection('users').doc(uid).get()));
+            setFriends(users.filter(u => u.exists).map(u => Object.assign({ id: u.id }, u.data())));
+        })();
+    }, [step]);
+    const liveLink = window.location.href.split('#')[0] + '#live=' + live.id;
+    const logShare = () => db.collection('liveStreams').doc(live.id).update({ sharesCount: FieldValue.increment(1) }).catch(() => { });
+    const sendToFriend = async (u) => {
+        setBusy(true);
+        try {
+            const chatId = chatIdFor(profile.id, u.id);
+            await sendChatMessage(profile.id, chatId, u.id, { type: 'text', text: `${profile.displayName} is live now: ${live.title || 'Watch live'} — ${liveLink}` });
+            await logShare();
+            toast('Sent to ' + (u.displayName || u.username), 'success');
+            onClose();
+        } catch (e) { toast(friendlyError(e), 'error'); }
+        finally { setBusy(false); }
+    };
+    const copyLink = async () => {
+        var _a;
+        await logShare();
+        (_a = navigator.clipboard) === null || _a === void 0 ? void 0 : _a.writeText(liveLink);
+        toast('Link copied to clipboard', 'success');
+        onClose();
+    };
+    const openWhatsApp = async () => {
+        await logShare();
+        window.open('https://wa.me/?text=' + encodeURIComponent(`${profile.displayName} is live now — ${liveLink}`), '_blank');
+        onClose();
+    };
+    const moreOptions = async () => {
+        if (navigator.share) {
+            try {
+                await navigator.share({ url: liveLink, text: (live.hostName || profile.displayName) + ' is live now on Yeloface' });
+                await logShare();
+            } catch (e) { }
+            onClose();
+        } else {
+            copyLink();
+        }
+    };
+    if (step === 'message') {
+        const filtered = (friends || []).filter(u => !fq.trim() || (u.displayName || u.username || '').toLowerCase().includes(fq.trim().toLowerCase()));
+        return React.createElement(BottomSheet, { title: "Send in a message", onClose: onClose },
+            React.createElement("div", { className: "p-2" },
+                React.createElement("input", { value: fq, onChange: e => setFq(e.target.value), placeholder: "Search friends…", className: "w-full bg-slate-50 dark:bg-ink-700 rounded-lg px-3 py-2.5 text-sm mb-2" }),
+                friends === null && React.createElement("p", { className: "text-sm text-slate-400 text-center py-6" }, "Loading…"),
+                friends !== null && filtered.length === 0 && React.createElement("p", { className: "text-sm text-slate-400 text-center py-6" }, "No friends found."),
+                React.createElement("div", { className: "max-h-72 overflow-y-auto" },
+                    filtered.map(u => React.createElement("button", { key: u.id, disabled: busy, onClick: () => sendToFriend(u), className: "w-full flex items-center gap-3 px-2 py-2.5 rounded-lg hover:bg-slate-50 dark:hover:bg-ink-700 text-left" },
+                        React.createElement(Avatar, { user: u, size: 9 }),
+                        React.createElement("span", { className: "text-sm font-semibold flex-1 truncate" }, u.displayName || u.username))))));
+    }
+    const ROW = "w-full flex items-center gap-3 px-3 py-3 rounded-xl hover:bg-slate-50 dark:hover:bg-ink-700 text-left text-sm font-semibold";
+    return React.createElement(BottomSheet, { title: "Share this live", onClose: onClose },
+        React.createElement("div", { className: "p-2 space-y-1" },
+            React.createElement("button", { onClick: () => setStep('message'), className: ROW },
+                React.createElement("span", { className: "w-9 h-9 rounded-full bg-brand-100 dark:bg-brand-900/30 text-brand-600 dark:text-brand-400 flex items-center justify-center" }, React.createElement("i", { className: "fa-solid fa-paper-plane" })),
+                "Send in a message"),
+            React.createElement("button", { onClick: openWhatsApp, className: ROW },
+                React.createElement("span", { className: "w-9 h-9 rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 flex items-center justify-center" }, React.createElement("i", { className: "fa-brands fa-whatsapp" })),
+                "Share to WhatsApp"),
+            React.createElement("button", { onClick: copyLink, className: ROW },
+                React.createElement("span", { className: "w-9 h-9 rounded-full bg-slate-100 dark:bg-ink-700 flex items-center justify-center" }, React.createElement("i", { className: "fa-solid fa-link" })),
+                "Copy link"),
+            React.createElement("button", { onClick: moreOptions, className: ROW },
+                React.createElement("span", { className: "w-9 h-9 rounded-full bg-slate-100 dark:bg-ink-700 flex items-center justify-center" }, React.createElement("i", { className: "fa-solid fa-ellipsis" })),
+                "More options")));
 }
 function LiveViewerScreen({ liveId, go }) {
     const { profile } = useAuth();
@@ -4703,6 +4819,7 @@ function LiveViewerScreen({ liveId, go }) {
     const comments = useLiveComments(liveId);
     const [commentText, setCommentText] = useState('');
     const [liked, setLiked] = useState(false);
+    const [shareOpen, setShareOpen] = useState(false);
     const videoRef = useRef(null);
     useEffect(() => { if (videoRef.current) videoRef.current.srcObject = viewer.remoteStream || null; }, [viewer.remoteStream]);
     useEffect(() => {
@@ -4745,8 +4862,16 @@ function LiveViewerScreen({ liveId, go }) {
                     React.createElement("div", { className: "flex items-center gap-2" },
                         React.createElement("input", { value: commentText, onChange: e => setCommentText(e.target.value), onKeyDown: e => e.key === 'Enter' && sendComment(), placeholder: "Comment\u2026", className: "flex-1 px-4 py-2.5 rounded-full bg-white/15 text-white placeholder-white/50 text-sm focus:outline-none" }),
                         React.createElement("button", { onClick: sendComment, className: "w-10 h-10 rounded-full bg-white/15 flex items-center justify-center text-white shrink-0" }, React.createElement("i", { className: "fa-solid fa-paper-plane text-sm" })))),
-                React.createElement("button", { onClick: like, className: "w-11 h-11 rounded-full bg-white/15 flex items-center justify-center shrink-0 mb-1" },
-                    React.createElement("i", { className: "fa-solid fa-heart text-lg " + (liked ? "text-red-500" : "text-white") })))));
+                React.createElement("div", { className: "flex flex-col items-center gap-3 shrink-0 mb-1" },
+                    React.createElement("button", { onClick: like, className: "flex flex-col items-center gap-0.5" },
+                        React.createElement("span", { className: "w-11 h-11 rounded-full bg-white/15 flex items-center justify-center" },
+                            React.createElement("i", { className: "fa-solid fa-heart text-lg " + (liked ? "text-red-500" : "text-white") })),
+                        React.createElement("span", { className: "text-white text-[11px] font-semibold" }, doc.likesCount || 0)),
+                    React.createElement("button", { onClick: () => setShareOpen(true), className: "flex flex-col items-center gap-0.5" },
+                        React.createElement("span", { className: "w-11 h-11 rounded-full bg-white/15 flex items-center justify-center" },
+                            React.createElement("i", { className: "fa-solid fa-share text-lg text-white" })),
+                        React.createElement("span", { className: "text-white text-[11px] font-semibold" }, doc.sharesCount || 0))))),
+        shareOpen && React.createElement(LiveShareSheet, { live: doc, onClose: () => setShareOpen(false) }));
 }
 
 /* ============================== MULTI-ACCOUNT: locally remembered logins ==============================
@@ -6836,7 +6961,7 @@ function PostCard({ post, go, groupCtx, autoOpenComments, sponsored, repeated })
         React.createElement("div", { className: "grid grid-cols-2 gap-0.5 overflow-hidden mb-2" }, post.images.map((img, i) => React.createElement("img", { key: i, src: img, loading: "lazy", onClick: () => openLightbox(post.images, i), className: "w-full h-full object-cover max-h-[420px] cursor-zoom-in" }))))),
         post.gifURL && React.createElement("div", { className: "bg-slate-100 dark:bg-ink-900 mb-2" },
             React.createElement("img", { src: post.gifURL, loading: "lazy", onClick: () => openLightbox([post.gifURL], 0), className: "w-full max-h-[420px] object-contain cursor-zoom-in mx-auto" })),
-        post.videoURL && React.createElement("div", { className: "bg-black mb-2" },
+        post.videoURL && React.createElement("div", { className: "bg-black mb-2 min-h-[240px] flex items-center justify-center" },
             React.createElement(AutoPauseVideo, { src: post.videoURL, controls: true, playsInline: true, className: "w-full max-h-[480px]" })),
         post.documentURL && React.createElement("div", { className: "px-3 sm:px-4 mb-2" },
             React.createElement("a", { href: post.documentURL, target: "_blank", rel: "noopener noreferrer", className: "flex items-center gap-3 bg-slate-50 dark:bg-ink-700 rounded-xl p-3 hover:bg-slate-100 dark:hover:bg-ink-600 transition" },
@@ -7451,21 +7576,20 @@ function ListingFeedCard({ listing, go, promoted }) {
         React.createElement("div", { className: "px-3 sm:px-4 pb-3 pt-1" },
             React.createElement("button", { onClick: toggleFav, disabled: busy, className: "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold mb-2 " + (favorited ? "bg-red-50 text-red-500 dark:bg-red-900/20" : "bg-slate-100 dark:bg-ink-700") },
                 React.createElement("i", { className: (favorited ? "fa-solid" : "fa-regular") + " fa-heart" }), favCount || ''),
-            // A grid (not flex-1) guarantees these three divide the row exactly, so a button can
-            // never overflow off-screen and get silently clipped by the card's overflow-hidden —
-            // which is what was happening to "View" on narrower phones.
-            React.createElement("div", { className: "grid " + (!isOwner && whatsappHref ? "grid-cols-3" : "grid-cols-2") + " gap-2" },
-                !isOwner && whatsappHref && React.createElement("a", { href: whatsappHref, target: "_blank", rel: "noopener", className: "flex items-center justify-center gap-1.5 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold px-2 py-2 rounded-full" },
-                    React.createElement("i", { className: "fa-brands fa-whatsapp" }), "WhatsApp"),
-                !isOwner && React.createElement("button", { onClick: messageSeller, className: "flex items-center justify-center gap-1.5 bg-slate-100 dark:bg-ink-700 hover:bg-slate-200 dark:hover:bg-ink-600 text-xs font-bold px-2 py-2 rounded-full" },
-                    React.createElement("i", { className: "fa-solid fa-message" }), "Message"),
-                React.createElement("button", { onClick: openListing, className: "flex items-center justify-center gap-1.5 bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold px-2 py-2 rounded-full" },
+            // WhatsApp + Message share one row; View gets its own full-width row underneath —
+            // keeps every button readable on narrow phones instead of cramming three into one row.
+            React.createElement("div", { className: "flex flex-col gap-2" },
+                !isOwner && React.createElement("div", { className: "grid " + (whatsappHref ? "grid-cols-2" : "grid-cols-1") + " gap-2" },
+                    whatsappHref && React.createElement("a", { href: whatsappHref, target: "_blank", rel: "noopener", className: "flex items-center justify-center gap-1.5 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold px-2 py-2 rounded-full" },
+                        React.createElement("i", { className: "fa-brands fa-whatsapp" }), "WhatsApp"),
+                    React.createElement("button", { onClick: messageSeller, className: "flex items-center justify-center gap-1.5 bg-sky-500 hover:bg-sky-600 text-white text-xs font-bold px-2 py-2 rounded-full" },
+                        React.createElement("i", { className: "fa-solid fa-message" }), "Message")),
+                React.createElement("button", { onClick: openListing, className: "w-full flex items-center justify-center gap-1.5 bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold px-2 py-2 rounded-full" },
                     "View", React.createElement("i", { className: "fa-solid fa-arrow-right text-[10px]" })))));
 }
 function HomeFeed({ go }) {
     const { profile } = useAuth();
     const [posts, setPosts] = useState(null);
-    const [reels, setReels] = useState(null);
     const [refreshing, setRefreshing] = useState(false);
     const activeCampaigns = useActiveAdCampaigns();
     const listings = useRecentTimelineListings();
@@ -7480,24 +7604,18 @@ function HomeFeed({ go }) {
                 .filter(p => !p.hiddenByAdmin && !p.groupId && !p.isAd)));
         return unsub;
     }, []);
-    useEffect(() => {
-        // Deliberately NOT chaining .where('privacy','==','public') onto .orderBy('createdAt') —
-        // see the matching note in ReelsStrip below for why (avoids needing a composite index).
-        const unsub = db.collection('reels').orderBy('createdAt', 'desc').limit(30)
-            .onSnapshot(snap => setReels(snap.docs.map(d => (Object.assign({ id: d.id }, d.data())))
-                .filter(r => !r.hiddenByAdmin && (r.privacy === 'public' || r.authorId === profile.id))), () => setReels([]));
-        return unsub;
-    }, [profile.id]);
-    // Merge posts, reels, and marketplace listings into a single chronological timeline, exactly
-    // like Instagram/Facebook do, instead of keeping them siloed to separate strips/tabs.
-    // Admin-pinned posts still float to the top; reels/listings don't currently support a
-    // home-feed "pin" so they're excluded from that check.
+    // Merge posts and marketplace listings into a single chronological timeline, like
+    // Instagram/Facebook do, instead of keeping listings siloed to their own tab. Reels are
+    // deliberately NOT merged in as individual items — Facebook doesn't show reels as regular
+    // posts in the feed either, it drops in a horizontal "Reels" tray every so often instead
+    // (see the REELS_INTERVAL_ITEMS weave below, alongside the sponsored-slot weave).
+    // Admin-pinned posts still float to the top; listings don't currently support a home-feed
+    // "pin" so they're excluded from that check.
     const items = useMemo(() => {
-        if (posts === null && reels === null)
+        if (posts === null)
             return null;
         const merged = [
             ...(posts || []).map(p => ({ kind: 'post', data: p })),
-            ...(reels || []).map(r => ({ kind: 'reel', data: r })),
             ...(listings || []).map(l => ({ kind: 'listing', data: l })),
         ];
         merged.sort((a, b) => {
@@ -7518,20 +7636,23 @@ function HomeFeed({ go }) {
             ...(promotedListings || []).map(l => ({ kind: 'promotedListing', data: l })),
             ...officialRepeats.map(p => ({ kind: 'officialRepeat', data: p })),
         ];
-        if (sponsoredPool.length === 0)
-            return merged;
         const withAds = [];
         let adIdx = 0;
         merged.forEach((item, i) => {
             withAds.push(item);
-            if ((i + 1) % AD_INTERVAL_ITEMS === 0) {
+            if (sponsoredPool.length > 0 && (i + 1) % AD_INTERVAL_ITEMS === 0) {
                 const slot = sponsoredPool[adIdx % sponsoredPool.length];
                 withAds.push(Object.assign({}, slot, { slotKey: 'sponsored-slot-' + i + '-' + slot.data.id }));
                 adIdx++;
             }
+            // Drop in a Reels tray every REELS_INTERVAL_ITEMS timeline items — same "once in a
+            // while" cadence Facebook uses, rather than every reel appearing as its own post.
+            if ((i + 1) % REELS_INTERVAL_ITEMS === 0) {
+                withAds.push({ kind: 'reelsTray', slotKey: 'reels-tray-' + i });
+            }
         });
         return withAds;
-    }, [posts, reels, listings, activeCampaigns, promotedListings, officialRepeats]);
+    }, [posts, listings, activeCampaigns, promotedListings, officialRepeats]);
     return (React.createElement("div", null,
         React.createElement(PostTriggerBar, { go: go }),
         React.createElement(LiveNowBar, { go: go }),
@@ -7552,9 +7673,9 @@ function HomeFeed({ go }) {
                         ? React.createElement(ListingFeedCard, { key: it.slotKey, listing: it.data, go: go, promoted: true })
                         : it.kind === 'officialRepeat'
                             ? React.createElement(PostCard, { key: it.slotKey, post: it.data, go: go, repeated: true })
-                            : it.kind === 'listing'
-                                ? React.createElement(ListingFeedCard, { key: 'l-' + it.data.id, listing: it.data, go: go })
-                                : React.createElement(TimelineReelCard, { key: 'r-' + it.data.id, reel: it.data, go: go });
+                            : it.kind === 'reelsTray'
+                                ? React.createElement(ReelsStrip, { key: it.slotKey, go: go })
+                                : React.createElement(ListingFeedCard, { key: 'l-' + it.data.id, listing: it.data, go: go });
             return React.createElement(React.Fragment, null,
                 items.slice(0, cutoff).map(renderItem),
                 React.createElement(PeopleYouMayKnow, { go: go }),
@@ -17081,6 +17202,10 @@ function useAllAdCampaigns(active) {
    long per-device cooldown — so an approved campaign shows up right away and keeps reappearing
    as the person scrolls, which is closer to how a real ad-supported feed behaves. */
 const AD_INTERVAL_ITEMS = 6;
+/* How often the Reels tray reappears in the home timeline, in timeline items — matches
+   Facebook showing a horizontal Reels tray every so often while scrolling, instead of every
+   reel appearing as its own post (see the weave in HomeFeed above). */
+const REELS_INTERVAL_ITEMS = 10;
 /* Feed-facing: live 'active' campaigns only, synced lazily so 'approved' campaigns whose start
    date just arrived (or 'active' ones that just ran out of budget/date) flip promptly. */
 function useActiveAdCampaigns() {
