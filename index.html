@@ -4465,8 +4465,24 @@ async function startGoingLive(profile, title) {
     } catch (e) {
         throw new Error('Could not access your camera/microphone. Please allow permission and try again.');
     }
+    // Best-effort recording of the broadcast itself (via MediaRecorder, reading the same local
+    // stream being sent to viewers) so that once the live ends there's actual footage to attach
+    // to the recap post instead of just stats. Never lets recording failure/lack of browser
+    // support stop the live from starting — worst case, the recap just has no video to replay.
+    let recorder = null, recordedChunks = [], mimeType = null;
+    try {
+        if (window.MediaRecorder) {
+            mimeType = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']
+                .find(t => MediaRecorder.isTypeSupported(t)) || null;
+            if (mimeType) {
+                recorder = new MediaRecorder(localStream, { mimeType });
+                recorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) recordedChunks.push(e.data); };
+                recorder.start(1000); // 1s chunks, so we always have footage even if stop() is abrupt
+            }
+        }
+    } catch (e) { recorder = null; }
     const liveRef = db.collection('liveStreams').doc();
-    __liveHostSession = { liveId: liveRef.id, localStream, peers: {} };
+    __liveHostSession = { liveId: liveRef.id, localStream, peers: {}, recorder, recordedChunks, mimeType };
     await liveRef.set({
         hostId: profile.id, hostName: profile.displayName || 'Someone', hostPhoto: profile.photoURL || null,
         title: (title || '').trim(), status: 'live', viewerCount: 0, likesCount: 0, commentsCount: 0,
@@ -4512,8 +4528,49 @@ async function endGoingLive() {
     __liveHostSession = null;
     if (s.viewersUnsub) s.viewersUnsub();
     Object.values(s.peers).forEach(p => { try { p.pc.close(); } catch (e) { } if (p.candUnsub) p.candUnsub(); });
+    // Stop the recorder (and wait for its final buffered chunk to flush) before stopping the
+    // tracks it's reading from — stopping tracks first would cut the last moment off.
+    let recordingBlob = null;
+    if (s.recorder && s.recorder.state !== 'inactive') {
+        try {
+            recordingBlob = await new Promise((resolve) => {
+                s.recorder.onstop = () => resolve(s.recordedChunks.length ? new Blob(s.recordedChunks, { type: s.mimeType }) : null);
+                s.recorder.stop();
+            });
+        } catch (e) { recordingBlob = null; }
+    }
     try { s.localStream.getTracks().forEach(t => t.stop()); } catch (e) { }
-    db.collection('liveStreams').doc(s.liveId).update({ status: 'ended', endedAt: FieldValue.serverTimestamp() }).catch(() => { });
+    const liveRef = db.collection('liveStreams').doc(s.liveId);
+    try {
+        const snap = await liveRef.get();
+        const data = snap.exists ? snap.data() : null;
+        await liveRef.update({ status: 'ended', endedAt: FieldValue.serverTimestamp() });
+        // Drop a "was live" recap onto the host's timeline — without this, ending a live just
+        // makes it disappear with nothing to show it happened, unlike every other post type.
+        if (data && data.hostId) {
+            const startedMs = millisOf(data.startedAt) || Date.now();
+            const durationSec = Math.max(0, Math.round((Date.now() - startedMs) / 1000));
+            let videoURL = null;
+            // Upload the just-recorded broadcast so the recap is an actual, rewatchable video —
+            // but never let an upload failure (too large, offline, quota, browser without
+            // MediaRecorder support) stop the recap post itself from being created.
+            if (recordingBlob && recordingBlob.size > 0) {
+                try {
+                    const ext = (s.mimeType || '').includes('webm') ? 'webm' : 'mp4';
+                    const vRef = storage.ref(`liveRecordings/${data.hostId}/${s.liveId}.${ext}`);
+                    await vRef.put(recordingBlob, { contentType: s.mimeType || 'video/webm' });
+                    videoURL = await vRef.getDownloadURL();
+                } catch (e) { videoURL = null; }
+            }
+            await db.collection('posts').add({
+                authorId: data.hostId, text: data.title ? ('Was live: ' + data.title) : 'Was live', images: [], hashtags: [],
+                videoURL: videoURL || null,
+                liveRecap: { liveId: s.liveId, title: data.title || '', peakViewerCount: data.viewerCount || 0, durationSec, hasVideo: !!videoURL },
+                createdAt: FieldValue.serverTimestamp(), likesCount: 0, commentsCount: 0, sharesCount: 0,
+            });
+            db.collection('users').doc(data.hostId).update({ postsCount: FieldValue.increment(1) }).catch(() => { });
+        }
+    } catch (e) { /* best-effort — never block ending the live over this */ }
     liveHostStore.set({ active: false });
 }
 // Viewer side: one RTCPeerConnection, receive-only, connecting straight to the host.
@@ -6731,6 +6788,21 @@ function ReactionsListModal({ reactions, onClose, go }) {
                 React.createElement("span", { className: "text-sm font-semibold truncate" }, u ? (u.displayName || u.username) : 'Loading\u2026'));
         }));
 }
+// Renders inside a post's content when it's a "was live" recap (post.liveRecap) — a compact
+// badge with the live's title, how long it ran, and how many people watched at peak.
+function LiveRecapBadge({ recap }) {
+    const totalSec = recap.durationSec || 0;
+    const mins = Math.floor(totalSec / 60);
+    const secs = totalSec % 60;
+    const durationLabel = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+    return React.createElement("div", { className: "flex items-center gap-2 bg-red-50 dark:bg-red-900/20 border border-red-100 dark:border-red-900/30 rounded-xl px-3 py-2 mb-2" },
+        React.createElement("span", { className: "shrink-0 w-8 h-8 rounded-full bg-red-600 text-white flex items-center justify-center" },
+            React.createElement("i", { className: "fa-solid fa-video text-xs" })),
+        React.createElement("div", { className: "min-w-0" },
+            React.createElement("p", { className: "text-xs font-bold text-red-600 dark:text-red-400" },
+                "Was live \u00b7 lasted ", durationLabel, recap.hasVideo ? " \u00b7 replay below" : ''),
+            recap.peakViewerCount > 0 && React.createElement("p", { className: "text-[11px] text-slate-500 dark:text-slate-400" }, recap.peakViewerCount, " people watched")));
+}
 function PostCard({ post, go, groupCtx, autoOpenComments, sponsored, repeated }) {
     var _a;
     const { profile } = useAuth();
@@ -6990,6 +7062,7 @@ function PostCard({ post, go, groupCtx, autoOpenComments, sponsored, repeated })
                 React.createElement("button", { onClick: handleAdMessageClick, className: "flex-1 flex items-center justify-center gap-1.5 bg-slate-100 dark:bg-ink-700 hover:bg-slate-200 dark:hover:bg-ink-600 text-slate-700 dark:text-slate-200 text-xs font-bold px-3 py-2 rounded-full transition-colors" },
                     React.createElement("i", { className: "fa-solid fa-message" }), "Message"))),
         React.createElement("div", { className: "px-3 sm:px-4" },
+            post.liveRecap && React.createElement(LiveRecapBadge, { recap: post.liveRecap }),
             post.sharedPostId && React.createElement(SharedPostPreview, { postId: post.sharedPostId, go: go }),
             post.sharedGroupId && React.createElement(SharedGroupPreview, { groupId: post.sharedGroupId, go: go }),
             post.sharedJobId && React.createElement(SharedJobPreview, { jobId: post.sharedJobId, go: go }),
@@ -7587,6 +7660,22 @@ function ListingFeedCard({ listing, go, promoted }) {
                 React.createElement("button", { onClick: openListing, className: "w-full flex items-center justify-center gap-1.5 bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold px-2 py-2 rounded-full" },
                     "View", React.createElement("i", { className: "fa-solid fa-arrow-right text-[10px]" })))));
 }
+/* Shows an active live stream right in the home timeline (not just the small avatar strip up
+   top) — a real, full-width card like Facebook's live posts, with a pulsing LIVE badge, viewer
+   count, and a Join Live button, so scrolling the feed is enough to notice someone's live and
+   jump straight in. */
+function LiveNowCard({ live, go }) {
+    return React.createElement("div", { className: "bg-white dark:bg-ink-800 border border-red-200 dark:border-red-900/40 rounded-lg sm:rounded-2xl mb-2 overflow-hidden cursor-pointer", onClick: () => go({ name: 'liveView', liveId: live.id }) },
+        React.createElement("div", { className: "flex items-center gap-3 px-3 sm:px-4 py-3" },
+            React.createElement("div", { className: "relative shrink-0" },
+                React.createElement(Avatar, { user: { photoURL: live.hostPhoto, displayName: live.hostName }, size: 12 }),
+                React.createElement("span", { className: "absolute -bottom-1 left-1/2 -translate-x-1/2 bg-red-600 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full animate-pulse" }, "LIVE")),
+            React.createElement("div", { className: "min-w-0 flex-1" },
+                React.createElement("p", { className: "font-bold text-sm truncate" }, live.hostName || 'Someone', " is live now"),
+                live.title && React.createElement("p", { className: "text-xs text-slate-500 dark:text-slate-400 truncate" }, live.title),
+                React.createElement("p", { className: "text-[11px] text-slate-400" }, React.createElement("i", { className: "fa-solid fa-eye mr-1" }), live.viewerCount || 0, " watching now")),
+            React.createElement("button", { onClick: (e) => { e.stopPropagation(); go({ name: 'liveView', liveId: live.id }); }, className: "shrink-0 bg-red-600 hover:bg-red-700 text-white text-xs font-bold px-4 py-2 rounded-full" }, "Join Live")));
+}
 function HomeFeed({ go }) {
     const { profile } = useAuth();
     const [posts, setPosts] = useState(null);
@@ -7595,6 +7684,7 @@ function HomeFeed({ go }) {
     const listings = useRecentTimelineListings();
     const promotedListings = usePromotedListings();
     const officialRepeats = useRecentOfficialPosts();
+    const liveNow = useActiveLiveStreams();
     useEffect(() => {
         // Group posts are deliberately excluded from the global timeline — they only ever show
         // inside that group's own Posts tab. Besides matching how Groups behave on Facebook,
@@ -7625,6 +7715,10 @@ function HomeFeed({ go }) {
                 return pinB - pinA;
             return millisOf(b.data.createdAt) - millisOf(a.data.createdAt);
         });
+        // Active live streams float above everything else, including pinned posts — live is the
+        // most time-sensitive thing in the feed, and by the time someone scrolls past it the
+        // stream could already be over.
+        const liveItems = (liveNow || []).map(l => ({ kind: 'liveNow', data: l }));
         // Weave a sponsored slot in every few items, rotating through whichever ad campaigns are
         // currently 'active' AND whichever marketplace listings have an approved, still-running
         // paid promotion — as soon as the admin approves either one, it shows up here on the very
@@ -7636,7 +7730,7 @@ function HomeFeed({ go }) {
             ...(promotedListings || []).map(l => ({ kind: 'promotedListing', data: l })),
             ...officialRepeats.map(p => ({ kind: 'officialRepeat', data: p })),
         ];
-        const withAds = [];
+        const withAds = [...liveItems];
         let adIdx = 0;
         merged.forEach((item, i) => {
             withAds.push(item);
@@ -7652,7 +7746,7 @@ function HomeFeed({ go }) {
             }
         });
         return withAds;
-    }, [posts, listings, activeCampaigns, promotedListings, officialRepeats]);
+    }, [posts, listings, activeCampaigns, promotedListings, officialRepeats, liveNow]);
     return (React.createElement("div", null,
         React.createElement(PostTriggerBar, { go: go }),
         React.createElement(LiveNowBar, { go: go }),
@@ -7667,15 +7761,17 @@ function HomeFeed({ go }) {
             const cutoff = Math.min(3, items.length);
             const renderItem = it => it.kind === 'post'
                 ? React.createElement(PostCard, { key: 'p-' + it.data.id, post: it.data, go: go })
-                : it.kind === 'ad'
-                    ? React.createElement(AdSlot, { key: it.slotKey, campaign: it.data, go: go })
-                    : it.kind === 'promotedListing'
-                        ? React.createElement(ListingFeedCard, { key: it.slotKey, listing: it.data, go: go, promoted: true })
-                        : it.kind === 'officialRepeat'
-                            ? React.createElement(PostCard, { key: it.slotKey, post: it.data, go: go, repeated: true })
-                            : it.kind === 'reelsTray'
-                                ? React.createElement(ReelsStrip, { key: it.slotKey, go: go })
-                                : React.createElement(ListingFeedCard, { key: 'l-' + it.data.id, listing: it.data, go: go });
+                : it.kind === 'liveNow'
+                    ? React.createElement(LiveNowCard, { key: 'live-' + it.data.id, live: it.data, go: go })
+                    : it.kind === 'ad'
+                        ? React.createElement(AdSlot, { key: it.slotKey, campaign: it.data, go: go })
+                        : it.kind === 'promotedListing'
+                            ? React.createElement(ListingFeedCard, { key: it.slotKey, listing: it.data, go: go, promoted: true })
+                            : it.kind === 'officialRepeat'
+                                ? React.createElement(PostCard, { key: it.slotKey, post: it.data, go: go, repeated: true })
+                                : it.kind === 'reelsTray'
+                                    ? React.createElement(ReelsStrip, { key: it.slotKey, go: go })
+                                    : React.createElement(ListingFeedCard, { key: 'l-' + it.data.id, listing: it.data, go: go });
             return React.createElement(React.Fragment, null,
                 items.slice(0, cutoff).map(renderItem),
                 React.createElement(PeopleYouMayKnow, { go: go }),
