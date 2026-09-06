@@ -104,9 +104,15 @@
 <script src="https://js.paystack.co/v1/inline.js" onload="window.__zloveStatus.paystack='ok'" onerror="window.__zloveStatus.paystack='failed'"></script>
 
 <style>
-  html { scroll-behavior: smooth; font-size: 118%; height: 100%; overscroll-behavior-y: none; }
-  body { font-family: 'Inter', sans-serif; font-weight: 500; height: 100%; overflow: hidden; overscroll-behavior-y: none; }
+  html { scroll-behavior: smooth; font-size: 123%; height: 100%; overscroll-behavior-y: none; }
+  body { font-family: 'Inter', sans-serif; font-weight: 600; height: 100%; overflow: hidden; overscroll-behavior-y: none; }
   #root { height: 100%; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior-y: none; }
+  /* Make previously dull/washed-out muted text (timestamps, captions, secondary labels)
+     more vivid and legible instead of pale gray — same layout/spacing, just less "flat". */
+  .text-slate-400 { color: #52606d !important; }
+  .text-slate-500 { color: #3c4654 !important; }
+  .dark .text-slate-400 { color: #d3dae3 !important; }
+  .dark .text-slate-500 { color: #e6eaef !important; }
   /* iOS Safari zooms the page in when a focused input/textarea/select has a computed
      font-size under 16px. That zoom-then-snap-back is what reads as the chat box
      "jumping up and down" while typing. Force 16px on all form fields as a fallback
@@ -971,11 +977,71 @@ function setPresence(uid, online) {
         return;
     db.collection('users').doc(uid).update({ online, lastSeen: FieldValue.serverTimestamp() }).catch(() => { });
 }
+/* ============================== SOUND NOTIFICATIONS ==============================
+   A short two-tone "pop" chime played with the Web Audio API whenever the signed-in
+   user's total unread-message count goes up. Built with an oscillator instead of an
+   audio file so it needs no extra asset and still works offline. Controlled by a
+   simple on/off preference saved to localStorage (Account settings > Message sound
+   notifications), so it persists across visits without any backend changes. */
+const MESSAGE_SOUND_KEY = 'yeloface_message_sound_enabled';
+function isMessageSoundEnabled() {
+    const v = localStorage.getItem(MESSAGE_SOUND_KEY);
+    return v === null ? true : v === '1'; // on by default
+}
+function setMessageSoundEnabled(enabled) {
+    localStorage.setItem(MESSAGE_SOUND_KEY, enabled ? '1' : '0');
+    window.dispatchEvent(new Event('yeloface-message-sound-changed'));
+}
+// React hook so any component (e.g. the Settings toggle) can read/write the
+// preference reactively and stay in sync if it's changed elsewhere.
+function useMessageSoundSetting() {
+    const [enabled, setEnabledState] = useState(isMessageSoundEnabled);
+    useEffect(() => {
+        const onChange = () => setEnabledState(isMessageSoundEnabled());
+        window.addEventListener('yeloface-message-sound-changed', onChange);
+        return () => window.removeEventListener('yeloface-message-sound-changed', onChange);
+    }, []);
+    return [enabled, setMessageSoundEnabled];
+}
+let _yelofaceAudioCtx = null;
+function playMessageSound() {
+    if (!isMessageSoundEnabled())
+        return;
+    try {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx)
+            return;
+        if (!_yelofaceAudioCtx)
+            _yelofaceAudioCtx = new Ctx();
+        const ctx = _yelofaceAudioCtx;
+        if (ctx.state === 'suspended')
+            ctx.resume().catch(() => { });
+        const now = ctx.currentTime;
+        // Two quick ascending notes, like a light "ding-ding" — short and unobtrusive.
+        [[880, now, 0.09], [1320, now + 0.09, 0.12]].forEach(([freq, start, dur]) => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = 'sine';
+            osc.frequency.value = freq;
+            gain.gain.setValueAtTime(0.0001, start);
+            gain.gain.exponentialRampToValueAtTime(0.22, start + 0.015);
+            gain.gain.exponentialRampToValueAtTime(0.0001, start + dur);
+            osc.connect(gain).connect(ctx.destination);
+            osc.start(start);
+            osc.stop(start + dur + 0.02);
+        });
+    }
+    catch (e) { /* Web Audio unavailable — fail silently, never break the app */ }
+}
 function useUnreadMessages(uid) {
     const [count, setCount] = useState(0);
+    // Tracks the previous total purely to detect increases (new incoming messages);
+    // starts at null so the very first snapshot on load never triggers a sound.
+    const prevTotalRef = useRef(null);
     useEffect(() => {
         if (!uid)
             return;
+        prevTotalRef.current = null;
         const unsub = db.collection('chatMembers').where('uid', '==', uid).onSnapshot(snap => {
             let total = 0;
             snap.docs.forEach(d => {
@@ -983,6 +1049,10 @@ function useUnreadMessages(uid) {
                 if (!m.archived && !m.deletedAt && m.status === 'accepted')
                     total += (m.unreadCount || 0);
             });
+            if (prevTotalRef.current !== null && total > prevTotalRef.current) {
+                playMessageSound();
+            }
+            prevTotalRef.current = total;
             setCount(total);
         });
         return unsub;
@@ -4748,6 +4818,7 @@ function AccountSettingsScreen({ go }) {
     const [busy, setBusy] = useState(false);
     const [switcherOpen, setSwitcherOpen] = useState(false);
     const [chatLockOpen, setChatLockOpen] = useState(false);
+    const [messageSoundEnabled, setMessageSoundEnabled] = useMessageSoundSetting();
     const email = (auth.currentUser && auth.currentUser.email) || profile.email || '';
     const joined = profile.createdAt && profile.createdAt.toDate ? profile.createdAt.toDate().toLocaleDateString() : null;
     const sendReset = async () => {
@@ -4786,7 +4857,14 @@ function AccountSettingsScreen({ go }) {
                 React.createElement("i", { className: "fa-solid fa-lock w-5 " + (profile.chatLockEnabled ? "text-emerald-500" : "text-slate-500") }),
                 React.createElement("div", null,
                     React.createElement("p", { className: "text-sm font-semibold" }, "Chat Lock"),
-                    React.createElement("p", { className: "text-[11px] text-slate-400" }, profile.chatLockEnabled ? "On \u2014 tap to change PIN or turn off" : "Off \u2014 tap to protect Messages with a PIN")))),
+                    React.createElement("p", { className: "text-[11px] text-slate-400" }, profile.chatLockEnabled ? "On \u2014 tap to change PIN or turn off" : "Off \u2014 tap to protect Messages with a PIN"))),
+            React.createElement("div", { className: "w-full flex items-center gap-3 px-4 py-3.5" },
+                React.createElement("i", { className: "fa-solid fa-bell w-5 " + (messageSoundEnabled ? "text-emerald-500" : "text-slate-500") }),
+                React.createElement("div", { className: "flex-1 min-w-0" },
+                    React.createElement("p", { className: "text-sm font-semibold" }, "Message sound notifications"),
+                    React.createElement("p", { className: "text-[11px] text-slate-400" }, messageSoundEnabled ? "On \u2014 plays a sound for new messages" : "Off \u2014 new messages are silent")),
+                React.createElement("button", { onClick: () => setMessageSoundEnabled(!messageSoundEnabled), "aria-label": "Toggle message sound notifications", className: "w-11 h-6 rounded-full relative transition shrink-0 " + (messageSoundEnabled ? "bg-brand-600" : "bg-slate-200 dark:bg-ink-600") },
+                    React.createElement("span", { className: "absolute top-0.5 w-5 h-5 bg-white rounded-full transition " + (messageSoundEnabled ? "left-[22px]" : "left-0.5") })))),
         React.createElement("button", { onClick: doLogout, className: "w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-red-50 dark:bg-red-900/20 text-red-500 text-sm font-semibold" },
             React.createElement("i", { className: "fa-solid fa-arrow-right-from-bracket" }), "Log out of this account"),
         switcherOpen && React.createElement(AccountSwitcherSheet, { currentUid: profile.id, onClose: () => setSwitcherOpen(false) }),
