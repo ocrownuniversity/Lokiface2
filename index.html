@@ -704,7 +704,24 @@ function AutoPauseVideo(props) {
             el.poster = canvas.toDataURL('image/jpeg', 0.7);
         } catch (err) { /* cross-origin video data — leave it without a captured poster */ }
     };
-    return React.createElement("video", Object.assign({ ref, preload: "metadata", onLoadedData: captureFrame }, props));
+    // preload="metadata" alone often means the browser fetches dimensions/duration but never
+    // actually decodes a frame — so "loadeddata" (which captureFrame originally waited for)
+    // frequently never fires at all, leaving the poster permanently unset. Nudging currentTime
+    // forward by a hair forces the browser to decode that frame even under metadata-only
+    // preload, without downloading the whole video the way preload="auto" would.
+    const nudgeToFirstFrame = (e) => {
+        const el = e.currentTarget;
+        if (el.readyState < 2 && el.currentTime === 0) {
+            try { el.currentTime = 0.05; } catch (err) { /* ignore — captureFrame just won't fire */ }
+        }
+    };
+    // crossOrigin is required for the canvas frame-capture above to work at all: without it the
+    // browser treats the video as tainted no matter what CORS headers the server actually sends,
+    // so every toDataURL() call silently throws and gets swallowed by captureFrame's catch —
+    // which is exactly why posters were never actually appearing despite this logic being in
+    // place. Firebase Storage's public download URLs already send permissive CORS headers, so
+    // "anonymous" (no credentials) is enough.
+    return React.createElement("video", Object.assign({ ref, preload: "metadata", crossOrigin: "anonymous", onLoadedMetadata: nudgeToFirstFrame, onSeeked: captureFrame, onLoadedData: captureFrame }, props));
 }
 // "See more" now triggers off the actual rendered line count (3 lines, like Facebook),
 // instead of a fixed character count — a character limit either cuts short lines off way too
