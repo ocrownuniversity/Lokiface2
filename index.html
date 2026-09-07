@@ -2303,6 +2303,11 @@ async function deleteReelComment(reelId, commentId) {
     await db.collection('reels').doc(reelId).collection('comments').doc(commentId).delete();
     db.collection('reels').doc(reelId).update({ commentsCount: FieldValue.increment(-1) }).catch(() => { });
 }
+async function editReelComment(reelId, commentId, newText) {
+    await db.collection('reels').doc(reelId).collection('comments').doc(commentId).update({
+        text: newText, editedAt: FieldValue.serverTimestamp(),
+    });
+}
 async function toggleLikeReelComment(reelId, commentId, uid) {
     const ref = db.collection('reels').doc(reelId).collection('comments').doc(commentId).collection('likes').doc(uid);
     const snap = await ref.get();
@@ -6098,11 +6103,11 @@ function PostTriggerBar({ go }) {
     const { profile } = useAuth();
     return (React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-2xl border border-slate-100 dark:border-ink-700 p-3 mb-2 flex items-center gap-3" },
         React.createElement("button", { onClick: () => go({ name: 'profile', uid: profile.id }), className: "shrink-0" },
-            React.createElement(Avatar, { user: profile, size: 10 })),
-        React.createElement("button", { onClick: () => go({ name: 'createPost' }), className: "flex-1 text-left bg-slate-100 dark:bg-ink-700 hover:bg-slate-200 dark:hover:bg-ink-600 transition rounded-full px-4 py-2.5 text-slate-500 dark:text-slate-400 text-sm" }, "What's on your mind?"),
-        React.createElement("button", { onClick: () => go({ name: 'createPost', openPhotoPicker: true }), title: "Photo/Video", className: "shrink-0 flex flex-col items-center justify-center gap-0.5 w-12 h-12 rounded-xl text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition" },
-            React.createElement("i", { className: "fa-solid fa-image text-base" }),
-            React.createElement("span", { className: "text-[9px] font-bold leading-none" }, "Photo"))));
+            React.createElement(Avatar, { user: profile, size: 12 })),
+        React.createElement("button", { onClick: () => go({ name: 'createPost' }), className: "flex-1 min-w-0 text-left bg-slate-100 dark:bg-ink-700 hover:bg-slate-200 dark:hover:bg-ink-600 transition rounded-full px-4 py-3 text-slate-500 dark:text-slate-400 text-sm font-bold whitespace-nowrap overflow-hidden text-ellipsis" }, "What's on your mind?"),
+        React.createElement("button", { onClick: () => go({ name: 'createPost', openPhotoPicker: true }), title: "Photo/Video", className: "shrink-0 flex flex-col items-center justify-center gap-0.5 w-14 h-14 rounded-xl text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition" },
+            React.createElement("i", { className: "fa-solid fa-image text-2xl" }),
+            React.createElement("span", { className: "text-[11px] font-bold leading-none" }, "Photo"))));
 }
 /* ============================== CREATE POST (full page, Facebook-style) ============================== */
 // Same colourful icon-badge treatment as the app's Menu tiles, cycled across whatever stat
@@ -7293,21 +7298,30 @@ function Comments({ postId, go }) {
         }
         notifyTagged(tagged, profile.id, postId, 'tag');
     };
+    // Lets someone fix a typo/change their mind on their own comment after posting, instead of
+    // having to delete and repost. Only ever called for a comment the signed-in user actually
+    // owns (see the isOwnComment check in CommentThread) — text-only, image/tags stay as posted.
+    const editComment = async (commentId, newText) => {
+        await db.collection('posts').doc(postId).collection('comments').doc(commentId).update({
+            text: newText, editedAt: FieldValue.serverTimestamp(),
+        });
+    };
     // Official "Yeloface" replies are pinned to the top of the thread, like a Page reply on
     // Facebook — comments already come from Firestore in chronological order, so within each
     // group (official vs. everyone else) that original order is preserved.
     const topLevel = comments.filter(c => !c.parentId)
         .sort((a, b) => (b.officialAs === YELOFACE_OFFICIAL_PAGE_ID ? 1 : 0) - (a.officialAs === YELOFACE_OFFICIAL_PAGE_ID ? 1 : 0));
     return (React.createElement("div", { className: "mt-3 pt-3 border-t border-slate-100 dark:border-ink-700 space-y-3" },
-        topLevel.map(c => React.createElement(CommentThread, { key: c.id, comment: c, allComments: comments, depth: 0, go: go, postComment: postComment })),
+        topLevel.map(c => React.createElement(CommentThread, { key: c.id, comment: c, allComments: comments, depth: 0, go: go, postComment: postComment, editComment: editComment })),
         React.createElement(CommentComposer, { avatarUser: profile, onSubmit: (p) => postComment(Object.assign({}, p, { parentId: null })) })));
 }
 // Renders one comment plus, recursively, every reply beneath it — replies to
 // replies included — so a full threaded conversation renders from a flat
 // Firestore query. Nesting is visually capped after a few levels to stay
 // readable on a phone screen, while still remaining fully threaded in the data.
-function CommentThread({ comment, allComments, depth, go, postComment }) {
+function CommentThread({ comment, allComments, depth, go, postComment, editComment }) {
     const { profile } = useAuth();
+    const toast = useToast();
     // Comments posted "as Yeloface" from the Super Admin panel are written under the admin's
     // own real uid (authorId) so the write satisfies normal Firestore rules — but carry a
     // separate `officialAs` flag so they render with the "Yeloface" identity instead of the
@@ -7318,6 +7332,26 @@ function CommentThread({ comment, allComments, depth, go, postComment }) {
     const [author, setAuthor] = useState(isOfficial ? officialAuthor : null);
     const [replying, setReplying] = useState(false);
     const [showReplies, setShowReplies] = useState(false);
+    const [editing, setEditing] = useState(false);
+    const [editText, setEditText] = useState(comment.text || '');
+    const [savingEdit, setSavingEdit] = useState(false);
+    const isOwnComment = !isOfficial && comment.authorId === profile.id;
+    const saveEdit = async () => {
+        const trimmed = editText.trim();
+        if (!trimmed || savingEdit)
+            return;
+        setSavingEdit(true);
+        try {
+            await editComment(comment.id, trimmed);
+            setEditing(false);
+        }
+        catch (e) {
+            toast(friendlyError(e) || 'Could not save changes', 'error');
+        }
+        finally {
+            setSavingEdit(false);
+        }
+    };
     useEffect(() => {
         if (isOfficial) { setAuthor(officialAuthor); return; }
         const unsub = db.collection('users').doc(comment.authorId).onSnapshot(s => setAuthor(s.exists ? s.data() : null));
@@ -7340,14 +7374,20 @@ function CommentThread({ comment, allComments, depth, go, postComment }) {
                         React.createElement("span", { className: "cursor-pointer" + (isOfficial ? " text-brand-700 dark:text-brand-300 font-extrabold tracking-tight" : ""), onClick: goToAuthor }, author.displayName),
                         isOfficial && React.createElement("i", { className: "fa-solid fa-badge-check text-brand-500 text-xs" }),
                         isOfficial && React.createElement("span", { className: "text-[9px] font-bold uppercase tracking-wide text-white bg-gradient-to-r from-brand-600 to-brand-500 px-1.5 py-0.5 rounded-full" }, "Official"),
-                        React.createElement("span", { className: "text-slate-400 font-normal" }, timeAgo(comment.createdAt))),
+                        React.createElement("span", { className: "text-slate-400 font-normal" }, timeAgo(comment.createdAt), comment.editedAt ? ' \u00b7 edited' : '')),
                     React.createElement(TaggedLine, { users: comment.taggedUsers, go: go }),
-                    comment.text && (React.createElement("p", { className: "text-sm " + (isOfficial ? 'font-semibold' : comment.bold ? 'font-bold' : '') },
-                        comment.replyToDisplayName && React.createElement("span", { className: "text-brand-600 font-semibold mr-1" }, "@" + comment.replyToDisplayName),
-                        formatRichText(comment.text))),
-                    comment.image && React.createElement("img", { src: comment.image, onClick: () => openLightbox(comment.image), loading: "lazy", className: "mt-1.5 rounded-lg max-h-56 max-w-full object-cover cursor-zoom-in" })),
+                    editing
+                        ? React.createElement("div", { className: "flex items-center gap-2 mt-1" },
+                            React.createElement("input", { value: editText, onChange: e => setEditText(e.target.value), onKeyDown: e => e.key === 'Enter' && saveEdit(), autoFocus: true, className: "flex-1 min-w-0 bg-white dark:bg-ink-800 rounded-full px-3 py-1 text-sm border border-slate-200 dark:border-ink-600" }),
+                            React.createElement("button", { onClick: saveEdit, disabled: savingEdit || !editText.trim(), className: "text-brand-600 text-xs font-semibold shrink-0 disabled:opacity-40" }, savingEdit ? '\u2026' : 'Save'),
+                            React.createElement("button", { onClick: () => { setEditing(false); setEditText(comment.text || ''); }, className: "text-slate-400 text-xs font-semibold shrink-0" }, "Cancel"))
+                        : comment.text && (React.createElement("p", { className: "text-sm " + (isOfficial ? 'font-semibold' : comment.bold ? 'font-bold' : '') },
+                            comment.replyToDisplayName && React.createElement("span", { className: "text-brand-600 font-semibold mr-1" }, "@" + comment.replyToDisplayName),
+                            formatRichText(comment.text))),
+                    !editing && comment.image && React.createElement("img", { src: comment.image, onClick: () => openLightbox(comment.image), loading: "lazy", className: "mt-1.5 rounded-lg max-h-56 max-w-full object-cover cursor-zoom-in" })),
                 React.createElement("div", { className: "flex items-center gap-3 mt-1 pl-3 text-[11px] font-semibold text-slate-400" },
-                    React.createElement("button", { onClick: () => setReplying(r => !r), className: "hover:underline" }, "Reply")),
+                    React.createElement("button", { onClick: () => setReplying(r => !r), className: "hover:underline" }, "Reply"),
+                    isOwnComment && !editing && React.createElement("button", { onClick: () => setEditing(true), className: "hover:underline" }, "Edit")),
                 replying && React.createElement("div", { className: "mt-2" },
                     React.createElement(CommentComposer, { avatarUser: profile, compact: true, autoFocus: true, placeholder: "Reply to " + author.displayName + "\u2026", onCancel: () => setReplying(false), onSubmit: async (p) => {
                             await postComment(Object.assign({}, p, { parentId: comment.id, replyToUser: author }));
@@ -7360,7 +7400,7 @@ function CommentThread({ comment, allComments, depth, go, postComment }) {
                     React.createElement("i", { className: "fa-solid fa-share text-[10px] -scale-x-100" }),
                     children.length + (children.length === 1 ? ' reply' : ' replies')),
                 children.length > 0 && showReplies && React.createElement("div", { className: "mt-2 space-y-2" },
-                    children.map(c => React.createElement(CommentThread, { key: c.id, comment: c, allComments: allComments, depth: depth + 1, go: go, postComment: postComment })),
+                    children.map(c => React.createElement(CommentThread, { key: c.id, comment: c, allComments: allComments, depth: depth + 1, go: go, postComment: postComment, editComment: editComment })),
                     React.createElement("button", { onClick: () => setShowReplies(false), className: "text-[11px] font-semibold text-slate-400 hover:underline ml-1" }, "Hide replies"))))));
 }
 /* ============================== HOME FEED ============================== */
@@ -7771,7 +7811,7 @@ function HomeFeed({ go }) {
                             : it.kind === 'officialRepeat'
                                 ? React.createElement(PostCard, { key: it.slotKey, post: it.data, go: go, repeated: true })
                                 : it.kind === 'reelsTray'
-                                    ? React.createElement(ReelsStrip, { key: it.slotKey, go: go })
+                                    ? React.createElement(ReelsStrip, { key: it.slotKey, go: go, showCreateTile: false })
                                     : React.createElement(ListingFeedCard, { key: 'l-' + it.data.id, listing: it.data, go: go });
             return React.createElement(React.Fragment, null,
                 items.slice(0, cutoff).map(renderItem),
@@ -13132,18 +13172,45 @@ function SavedReelsScreen({ go }) {
 }
 /* ============================== REELS: COMMENTS SHEET ============================== */
 function ReelCommentRow({ reel, comment, meId, isOwnerOrMod, authors, onReply }) {
+    const toast = useToast();
     const liked = useReelLiveDoc(['reels', reel.id, 'comments', comment.id, 'likes', meId]);
     const a = authors[comment.uid];
     const canDelete = comment.uid === meId || isOwnerOrMod;
+    const isOwnComment = comment.uid === meId;
+    const [editing, setEditing] = useState(false);
+    const [editText, setEditText] = useState(comment.text || '');
+    const [savingEdit, setSavingEdit] = useState(false);
+    const saveEdit = async () => {
+        const trimmed = editText.trim();
+        if (!trimmed || savingEdit)
+            return;
+        setSavingEdit(true);
+        try {
+            await editReelComment(reel.id, comment.id, trimmed);
+            setEditing(false);
+        }
+        catch (e) {
+            toast(friendlyError(e) || 'Could not save changes', 'error');
+        }
+        finally {
+            setSavingEdit(false);
+        }
+    };
     return (React.createElement("div", { className: "flex gap-2.5" },
         React.createElement(Avatar, { user: a, size: 8 }),
         React.createElement("div", { className: "flex-1 min-w-0" },
-            React.createElement("p", { className: "text-sm" }, React.createElement("span", { className: "font-semibold mr-1.5" }, (a === null || a === void 0 ? void 0 : a.displayName) || 'User'), comment.text),
-            comment.image && React.createElement("img", { src: comment.image, onClick: () => openLightbox(comment.image), className: "mt-1.5 max-w-[160px] rounded-lg cursor-zoom-in" }),
+            editing
+                ? React.createElement("div", { className: "flex items-center gap-2" },
+                    React.createElement("input", { value: editText, onChange: e => setEditText(e.target.value), onKeyDown: e => e.key === 'Enter' && saveEdit(), autoFocus: true, className: "flex-1 min-w-0 bg-slate-50 dark:bg-ink-700 rounded-full px-3 py-1 text-sm border border-slate-200 dark:border-ink-600" }),
+                    React.createElement("button", { onClick: saveEdit, disabled: savingEdit || !editText.trim(), className: "text-brand-600 text-xs font-semibold shrink-0 disabled:opacity-40" }, savingEdit ? '\u2026' : 'Save'),
+                    React.createElement("button", { onClick: () => { setEditing(false); setEditText(comment.text || ''); }, className: "text-slate-400 text-xs font-semibold shrink-0" }, "Cancel"))
+                : React.createElement("p", { className: "text-sm" }, React.createElement("span", { className: "font-semibold mr-1.5" }, (a === null || a === void 0 ? void 0 : a.displayName) || 'User'), comment.text),
+            !editing && comment.image && React.createElement("img", { src: comment.image, onClick: () => openLightbox(comment.image), className: "mt-1.5 max-w-[160px] rounded-lg cursor-zoom-in" }),
             React.createElement("div", { className: "flex items-center gap-3 mt-1 text-xs text-slate-400" },
-                React.createElement("span", null, timeAgo(comment.createdAt)),
+                React.createElement("span", null, timeAgo(comment.createdAt), comment.editedAt ? ' \u00b7 edited' : ''),
                 React.createElement("button", { onClick: () => toggleLikeReelComment(reel.id, comment.id, meId), className: liked ? "text-pink-500 font-semibold" : "" }, "Like", comment.likesCount ? ' (' + comment.likesCount + ')' : ''),
                 React.createElement("button", { onClick: () => onReply(comment) }, "Reply"),
+                isOwnComment && !editing && React.createElement("button", { onClick: () => setEditing(true) }, "Edit"),
                 canDelete && React.createElement("button", { onClick: () => confirm('Delete this comment?') && deleteReelComment(reel.id, comment.id), className: "text-red-400" }, "Delete")))));
 }
 function ReelCommentsSheet({ reel, meId, isOwnerOrMod, onClose }) {
@@ -13684,7 +13751,7 @@ function ReelStripTile({ g, tileClass, go }) {
         React.createElement("p", { className: "absolute bottom-6 inset-x-0 text-center text-white text-[11px] font-bold px-1.5 truncate" }, ownerName || '\u2026'),
         React.createElement("p", { className: "absolute bottom-2 inset-x-0 text-center text-white/90 text-[10px] font-medium px-1" }, formatCount(r.viewsCount || 0), " views"));
 }
-function ReelsStrip({ go }) {
+function ReelsStrip({ go, showCreateTile = true }) {
     const { profile } = useAuth();
     const [reels, setReels] = useState(null);
     useEffect(() => {
@@ -13719,7 +13786,7 @@ function ReelsStrip({ go }) {
             React.createElement("p", { className: "font-display font-bold text-sm flex items-center gap-1.5" }, React.createElement("i", { className: "fa-solid fa-clapperboard text-brand-500" }), "Reels"),
             React.createElement("button", { onClick: () => go({ name: 'reels' }), className: "text-xs font-semibold text-brand-600 dark:text-brand-400" }, "See all")),
         React.createElement("div", { className: "flex gap-1.5 overflow-x-auto pb-1 -mx-1 px-1", style: { scrollbarWidth: 'none' } },
-            React.createElement("div", { onClick: () => go({ name: 'reelUpload' }), className: TILE },
+            showCreateTile && React.createElement("div", { onClick: () => go({ name: 'reelUpload' }), className: TILE },
                 React.createElement("img", { src: profile.photoURL || `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(profile.displayName || profile.username || '?')}&backgroundColor=b6e3f4,c0aede,d1d4f9,ffd5dc,ffdfbf`, className: "w-full h-full object-cover" }),
                 React.createElement("div", { className: "absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-black/80 to-transparent" }),
                 React.createElement("span", { className: "absolute left-1/2 -translate-x-1/2 bottom-8 w-11 h-11 rounded-full bg-brand-600 text-white flex items-center justify-center text-lg ring-[3px] ring-white dark:ring-ink-900" }, React.createElement("i", { className: "fa-solid fa-plus" })),
