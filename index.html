@@ -677,11 +677,16 @@ function audioExtFromMime(mime) {
 // can't ever leave the video silent — worst case it just doesn't auto-pause.
 //
 // Also fixes feed videos showing as a small black box before anyone taps play: with no
-// "preload" hint the browser (especially on slow/metered connections) may not fetch even
-// the video's dimensions, so it renders at a tiny fallback size with nothing drawn. Setting
-// preload="metadata" (unless the caller overrides it) makes the browser fetch just enough to
-// know the real size right away, and once a frame is available it's grabbed onto a canvas
-// and used as the poster, so a real preview image shows instead of plain black.
+// "preload" hint the browser (especially on slow/metered connections) may not fetch enough of
+// the file to know its dimensions or show anything, so it renders as a tiny box with nothing
+// drawn. preload="auto" tells the browser to proactively buffer, which both reveals the real
+// size immediately and lets it paint the current frame on its own — natively, with no canvas
+// trickery needed. (An earlier version tried to capture a frame onto a <canvas> for a poster
+// image instead, but that requires crossOrigin="anonymous", and Firebase Storage doesn't
+// guarantee CORS headers on its download URLs by default — with crossOrigin set but no matching
+// server header, browsers can refuse to load the video at all, which broke playback entirely
+// rather than just failing to draw a poster. preload="auto" avoids canvas access altogether, so
+// there's nothing for CORS to block.)
 function AutoPauseVideo(props) {
     const ref = useRef(null);
     useEffect(() => {
@@ -693,35 +698,7 @@ function AutoPauseVideo(props) {
         io.observe(el);
         return () => io.disconnect();
     }, []);
-    const captureFrame = (e) => {
-        const el = e.currentTarget;
-        if (el.poster || !el.videoWidth || !el.videoHeight) return;
-        try {
-            const canvas = document.createElement('canvas');
-            canvas.width = el.videoWidth;
-            canvas.height = el.videoHeight;
-            canvas.getContext('2d').drawImage(el, 0, 0, canvas.width, canvas.height);
-            el.poster = canvas.toDataURL('image/jpeg', 0.7);
-        } catch (err) { /* cross-origin video data — leave it without a captured poster */ }
-    };
-    // preload="metadata" alone often means the browser fetches dimensions/duration but never
-    // actually decodes a frame — so "loadeddata" (which captureFrame originally waited for)
-    // frequently never fires at all, leaving the poster permanently unset. Nudging currentTime
-    // forward by a hair forces the browser to decode that frame even under metadata-only
-    // preload, without downloading the whole video the way preload="auto" would.
-    const nudgeToFirstFrame = (e) => {
-        const el = e.currentTarget;
-        if (el.readyState < 2 && el.currentTime === 0) {
-            try { el.currentTime = 0.05; } catch (err) { /* ignore — captureFrame just won't fire */ }
-        }
-    };
-    // crossOrigin is required for the canvas frame-capture above to work at all: without it the
-    // browser treats the video as tainted no matter what CORS headers the server actually sends,
-    // so every toDataURL() call silently throws and gets swallowed by captureFrame's catch —
-    // which is exactly why posters were never actually appearing despite this logic being in
-    // place. Firebase Storage's public download URLs already send permissive CORS headers, so
-    // "anonymous" (no credentials) is enough.
-    return React.createElement("video", Object.assign({ ref, preload: "metadata", crossOrigin: "anonymous", onLoadedMetadata: nudgeToFirstFrame, onSeeked: captureFrame, onLoadedData: captureFrame }, props));
+    return React.createElement("video", Object.assign({ ref, preload: "auto" }, props));
 }
 // "See more" now triggers off the actual rendered line count (3 lines, like Facebook),
 // instead of a fixed character count — a character limit either cuts short lines off way too
@@ -6118,13 +6095,13 @@ function FriendActionButton({ meId, otherId, compact }) {
 /* ============================== POST TRIGGER BAR (Facebook-style "What's on your mind?") ============================== */
 function PostTriggerBar({ go }) {
     const { profile } = useAuth();
-    return (React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-2xl border border-slate-100 dark:border-ink-700 p-2.5 mb-2 flex items-center gap-2" },
+    return (React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-2xl border border-slate-100 dark:border-ink-700 p-2 mb-2 flex items-center gap-1.5" },
         React.createElement("button", { onClick: () => go({ name: 'profile', uid: profile.id }), className: "shrink-0" },
             React.createElement(Avatar, { user: profile, size: 12 })),
-        React.createElement("button", { onClick: () => go({ name: 'createPost' }), className: "flex-1 min-w-0 text-left bg-slate-100 dark:bg-ink-700 hover:bg-slate-200 dark:hover:bg-ink-600 transition rounded-full px-3 py-3 text-slate-500 dark:text-slate-400 text-[13px] font-bold whitespace-nowrap overflow-hidden text-ellipsis" }, "What's on your mind?"),
+        React.createElement("button", { onClick: () => go({ name: 'createPost' }), className: "flex-1 min-w-0 text-left bg-slate-100 dark:bg-ink-700 hover:bg-slate-200 dark:hover:bg-ink-600 transition rounded-full px-2.5 py-3 text-slate-500 dark:text-slate-400 text-[15px] font-bold whitespace-nowrap overflow-hidden text-ellipsis" }, "What's on your mind?"),
         React.createElement("button", { onClick: () => go({ name: 'createPost', openPhotoPicker: true }), title: "Photo/Video", className: "shrink-0 flex flex-col items-center justify-center gap-0.5 w-14 h-14 rounded-xl text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition" },
             React.createElement("i", { className: "fa-solid fa-image text-2xl" }),
-            React.createElement("span", { className: "text-[11px] font-bold leading-none" }, "Photo"))));
+            React.createElement("span", { className: "text-[11px] font-bold leading-none text-black dark:text-white" }, "Photo"))));
 }
 /* ============================== CREATE POST (full page, Facebook-style) ============================== */
 // Same colourful icon-badge treatment as the app's Menu tiles, cycled across whatever stat
