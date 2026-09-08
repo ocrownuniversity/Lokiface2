@@ -16980,10 +16980,12 @@ function useMyWalletWithdrawals(uid) {
 async function requestWalletWithdrawal(profile, amountNaira, zmonieDetails, cfg) {
     const amt = Number(amountNaira) || 0;
     const minAmt = cfg.minWithdrawal || 500;
+    const maxAmt = cfg.maxWithdrawal || 1000;
     const zmonieAccountNumber = (zmonieDetails && zmonieDetails.zmonieAccountNumber || '').trim();
     const zmonieAccountName = (zmonieDetails && zmonieDetails.zmonieAccountName || '').trim();
     if (cfg.withdrawalsEnabled === false) throw new Error('Withdrawals are currently disabled.');
     if (amt < minAmt) throw new Error(`Minimum withdrawal is ${formatNaira(minAmt)}.`);
+    if (amt > maxAmt) throw new Error(`Maximum withdrawal is ${formatNaira(maxAmt)} per request.`);
     if (!zmonieAccountNumber) throw new Error('Enter your Zmonie account number.');
     if (!zmonieAccountName) throw new Error('Enter the account name on your Zmonie account.');
     if (amt > (profile.walletBalance || 0)) throw new Error('Amount exceeds your available wallet balance.');
@@ -17483,7 +17485,8 @@ function WithdrawWalletSheet({ profile, cfg, onClose }) {
                 "You need a Zmonie account before you can withdraw. Enter the account number and account name on your Zmonie account below so we can send your payment there. Don't have one yet? Register first.",
                 React.createElement("a", { href: "https://zmonie.com", target: "_blank", rel: "noopener noreferrer", className: "block mt-2 text-center bg-amber-600 hover:bg-amber-700 text-white rounded-lg py-2 text-xs font-semibold" }, "Register on Zmonie")),
             React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Amount (\u20A6)"),
-            React.createElement("input", { type: "number", min: cfg.minWithdrawal || 500, value: amount, onChange: e => setAmount(e.target.value), placeholder: "Min " + formatNaira(cfg.minWithdrawal || 500), className: "w-full mt-1 mb-4 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" }),
+            React.createElement("input", { type: "number", min: cfg.minWithdrawal || 500, max: cfg.maxWithdrawal || 1000, value: amount, onChange: e => setAmount(e.target.value), placeholder: "Min " + formatNaira(cfg.minWithdrawal || 500), className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" }),
+            React.createElement("p", { className: "text-[11px] text-slate-400 mb-4" }, "Note: maximum withdrawal is ", formatNaira(cfg.maxWithdrawal || 1000), " per request."),
             React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Your Zmonie account number"),
             React.createElement("input", { value: zmonieAccountNumber, onChange: e => setZmonieAccountNumber(e.target.value.trim()), placeholder: "e.g. 0803xxxxxxx", className: "w-full mt-1 mb-4 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm font-mono" }),
             React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Your Zmonie account name"),
@@ -18240,10 +18243,12 @@ function useMyReferralWithdrawals(uid) {
 async function requestReferralWithdrawal(profile, amountNaira, zmonieDetails, cfg) {
     const amt = Number(amountNaira) || 0;
     const minAmt = cfg.minWithdrawal || 500;
+    const maxAmt = cfg.maxWithdrawal || 1000;
     const zmonieAccountNumber = (zmonieDetails && zmonieDetails.zmonieAccountNumber || '').trim();
     const zmonieAccountName = (zmonieDetails && zmonieDetails.zmonieAccountName || '').trim();
     if (!cfg.enabled) throw new Error('The referral program is currently disabled.');
     if (amt < minAmt) throw new Error(`Minimum withdrawal is ${formatNaira(minAmt)}.`);
+    if (amt > maxAmt) throw new Error(`Maximum withdrawal is ${formatNaira(maxAmt)} per request.`);
     if (!zmonieAccountNumber) throw new Error('Enter your Zmonie account number.');
     if (!zmonieAccountName) throw new Error('Enter the account name on your Zmonie account.');
     const balance = profile.referralBalance || 0;
@@ -18410,7 +18415,8 @@ function WithdrawReferralSheet({ profile, cfg, onClose }) {
                 "You need a Zmonie account before you can withdraw your referral earnings. Enter the account number and account name on your Zmonie account below so we can send your payment there. Don't have one yet? Register first.",
                 React.createElement("a", { href: "https://zmonie.com", target: "_blank", rel: "noopener noreferrer", className: "block mt-2 text-center bg-amber-600 hover:bg-amber-700 text-white rounded-lg py-2 text-xs font-semibold" }, "Register on Zmonie")),
             React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Amount (\u20A6)"),
-            React.createElement("input", { type: "number", min: cfg.minWithdrawal || 500, value: amount, onChange: e => setAmount(e.target.value), placeholder: "Min " + formatNaira(cfg.minWithdrawal || 500), className: "w-full mt-1 mb-4 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" }),
+            React.createElement("input", { type: "number", min: cfg.minWithdrawal || 500, max: cfg.maxWithdrawal || 1000, value: amount, onChange: e => setAmount(e.target.value), placeholder: "Min " + formatNaira(cfg.minWithdrawal || 500), className: "w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm" }),
+            React.createElement("p", { className: "text-[11px] text-slate-400 mb-4" }, "Note: maximum withdrawal is ", formatNaira(cfg.maxWithdrawal || 1000), " per request."),
             React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Your Zmonie account number"),
             React.createElement("input", { value: zmonieAccountNumber, onChange: e => setZmonieAccountNumber(e.target.value.trim()), placeholder: "e.g. 0803xxxxxxx", className: "w-full mt-1 mb-4 px-3 py-2 rounded-lg border border-slate-200 dark:border-ink-600 bg-transparent text-sm font-mono" }),
             React.createElement("label", { className: "text-xs font-semibold text-slate-500" }, "Your Zmonie account name"),
