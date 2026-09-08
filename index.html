@@ -11733,12 +11733,12 @@ function MessageBubble({ message, isMe, otherUid, otherUser, showAvatar, groupPo
     // way WhatsApp/Messenger show "This message was deleted." to both sides.
     if (message.deletedForEveryone) {
         return (React.createElement("div", { className: "flex items-end gap-1.5 msg-in " + (isMe ? "justify-end" : "justify-start") + " " + (groupPos === 'single' || groupPos === 'last' ? 'mb-2' : 'mb-0.5') },
-            !isMe && React.createElement("div", { className: "w-6 shrink-0" }, showAvatar && React.createElement(Avatar, { user: otherUser, size: 6 })),
+            !isMe && React.createElement("div", { className: "w-9 shrink-0" }, showAvatar && React.createElement(Avatar, { user: otherUser, size: 9 })),
             React.createElement("div", { className: "max-w-[75%] px-3 py-[6px] rounded-[18px] text-[13px] italic border " + (isMe ? "border-white/20 text-white/60 bg-[#0d9488]/40" : "border-slate-200 dark:border-ink-600 text-slate-400 bg-transparent") },
                 React.createElement("i", { className: "fa-solid fa-ban mr-1.5 text-[11px]" }), isMe ? "You deleted this message" : "This message was deleted")));
     }
     return (React.createElement("div", { className: "flex items-end gap-1.5 msg-in " + (isMe ? "justify-end" : "justify-start") + " " + (groupPos === 'single' || groupPos === 'last' ? 'mb-2' : 'mb-0.5') },
-        !isMe && React.createElement("div", { className: "w-6 shrink-0" }, showAvatar && React.createElement(Avatar, { user: otherUser, size: 6 })),
+        !isMe && React.createElement("div", { className: "w-9 shrink-0" }, showAvatar && React.createElement(Avatar, { user: otherUser, size: 9 })),
         React.createElement("div", { className: "max-w-[75%] group relative" },
             // Reply icon, revealed behind the bubble as it's dragged right — opacity ramps up
             // with drag distance so it's a visual preview of "how close to triggering a reply".
