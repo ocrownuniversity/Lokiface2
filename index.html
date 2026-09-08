@@ -989,6 +989,24 @@ function setPresence(uid, online) {
         return;
     db.collection('users').doc(uid).update({ online, lastSeen: FieldValue.serverTimestamp() }).catch(() => { });
 }
+// Live list of the signed-in user's friends who are currently online — subscribes to each
+// friend's user doc individually so it updates in real time as people come online/go offline
+// (a one-time fetch would go stale the moment someone's presence changes), reusing the same
+// isUserOnline() heartbeat check already relied on for chat "Active now" labels and dating
+// presence, so "online" means the same thing everywhere in the app.
+function useOnlineFriends(uid) {
+    const friendships = useFriendships(uid);
+    const friendIds = useMemo(() => (friendships || []).filter(f => f.status === 'accepted').map(f => otherUidOfFriendship(f, uid)), [JSON.stringify(friendships), uid]);
+    const [usersById, setUsersById] = useState({});
+    useEffect(() => {
+        if (friendIds.length === 0) { setUsersById({}); return; }
+        const unsubs = friendIds.map(fid => db.collection('users').doc(fid).onSnapshot(snap => {
+            setUsersById(prev => Object.assign({}, prev, { [fid]: snap.exists ? Object.assign({ id: fid }, snap.data()) : null }));
+        }));
+        return () => unsubs.forEach(u => u());
+    }, [JSON.stringify(friendIds)]);
+    return useMemo(() => Object.values(usersById).filter(u => u && isUserOnline(u)), [usersById]);
+}
 /* ============================== SOUND NOTIFICATIONS ==============================
    A short two-tone "pop" chime played with the Web Audio API whenever the signed-in
    user's total unread-message count goes up. Built with an oscillator instead of an
@@ -6973,7 +6991,8 @@ function PostCard({ post, go, groupCtx, autoOpenComments, sponsored, repeated })
                 React.createElement("div", { className: "relative shrink-0" },
                     React.createElement(Avatar, { user: author, size: 16 }),
                     isOfficial && React.createElement("span", { className: "absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-white dark:bg-ink-800 flex items-center justify-center shadow" },
-                        React.createElement("i", { className: "fa-solid fa-circle-check text-sky-500 text-[15px]" }))),
+                        React.createElement("i", { className: "fa-solid fa-circle-check text-sky-500 text-[15px]" })),
+                    !isOfficial && isUserOnline(author) && React.createElement("span", { className: "absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-yellow-400 ring-2 ring-white dark:ring-ink-800" })),
                 React.createElement("div", { className: "min-w-0" },
                     React.createElement("p", { className: "font-bold text-base flex items-center gap-1.5 min-w-0" }, React.createElement("span", { className: "truncate min-w-0" }, author.displayName),
                         isOfficial && React.createElement("i", { className: "fa-solid fa-badge-check text-sky-500 text-sm", title: "Verified" }),
@@ -7711,6 +7730,22 @@ function LiveNowCard({ live, go }) {
                 React.createElement("p", { className: "text-[11px] text-slate-400" }, React.createElement("i", { className: "fa-solid fa-eye mr-1" }), live.viewerCount || 0, " watching now")),
             React.createElement("button", { onClick: (e) => { e.stopPropagation(); go({ name: 'liveView', liveId: live.id }); }, className: "shrink-0 bg-red-600 hover:bg-red-700 text-white text-xs font-bold px-4 py-2 rounded-full" }, "Join Live")));
 }
+// Horizontal strip of friends who are currently online — like Messenger's "Active" list — so
+// scrolling the feed is enough to notice who's around right now. Tapping a friend opens a chat
+// with them directly, since "who's online" is mostly useful as a shortcut to message someone.
+function OnlineFriendsBar({ go }) {
+    const { profile } = useAuth();
+    const onlineFriends = useOnlineFriends(profile.id);
+    if (onlineFriends.length === 0) return null;
+    return React.createElement("div", { className: "bg-white dark:bg-ink-800 rounded-2xl border border-slate-100 dark:border-ink-700 p-3 mb-2" },
+        React.createElement("p", { className: "text-xs font-bold text-slate-500 dark:text-slate-400 mb-2 px-1" }, "Online now"),
+        React.createElement("div", { className: "flex gap-3 overflow-x-auto pb-0.5 -mx-1 px-1", style: { scrollbarWidth: 'none' } },
+            onlineFriends.map(f => React.createElement("button", { key: f.id, onClick: () => go({ name: 'chat', chatId: chatIdFor(profile.id, f.id), otherUid: f.id }), className: "flex flex-col items-center gap-1 shrink-0 w-14" },
+                React.createElement("div", { className: "relative" },
+                    React.createElement(Avatar, { user: f, size: 12 }),
+                    React.createElement("span", { className: "absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-yellow-400 ring-2 ring-white dark:ring-ink-800" })),
+                React.createElement("span", { className: "text-[11px] font-semibold truncate w-full text-center" }, (f.displayName || 'Friend').split(' ')[0])))));
+}
 function HomeFeed({ go }) {
     const { profile } = useAuth();
     const [posts, setPosts] = useState(null);
@@ -7784,6 +7819,7 @@ function HomeFeed({ go }) {
     }, [posts, listings, activeCampaigns, promotedListings, officialRepeats, liveNow]);
     return (React.createElement("div", null,
         React.createElement(PostTriggerBar, { go: go }),
+        React.createElement(OnlineFriendsBar, { go: go }),
         React.createElement(LiveNowBar, { go: go }),
         React.createElement(ReelsStrip, { go: go }),
         items === null && React.createElement(React.Fragment, null, [1, 2, 3].map(i => React.createElement(PostSkeleton, { key: i }))),
